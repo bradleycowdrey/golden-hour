@@ -128,26 +128,51 @@ const server = http.createServer((req, res) => {
     check(r.small.length === 0, `${what}: no text under 13px${r.small.length ? ': ' + r.small.slice(0, 4).join('; ') : ''}`);
     check(r.targets.length === 0, `${what}: tap targets at least 44px on one side and 28px on the other${r.targets.length ? ': ' + r.targets.slice(0, 5).join('; ') : ''}`);
   }
-  /** WCAG contrast of white-ish text against what is behind it: the sky at that height, under the card's scrim. */
+  /** WCAG contrast of the text against what is really behind it. The sky is drawn to a canvas from the page's own
+      pictures; text straight on the sky is checked against the brightest sky inside its box, and text on a card
+      against the brightest sky anywhere on screen (the worst it can scroll over), under the card's own fill. */
   async function contrast(page, what) {
-    const worst = await page.evaluate(() => {
-      const hex = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
-      const css = getComputedStyle(document.documentElement);
-      const stops = [[0, hex(css.getPropertyValue('--sky-top').trim())], [0.4, hex(css.getPropertyValue('--sky-top').trim())], [0.8, hex(css.getPropertyValue('--sky-mid').trim())], [1, hex(css.getPropertyValue('--sky-bottom').trim())]];
-      const skyAt = (f) => { for (let i = 1; i < stops.length; i++) if (f <= stops[i][0]) { const [a, ca] = stops[i - 1], [b, cb] = stops[i], k = (f - a) / (b - a || 1); return ca.map((v, j) => v + (cb[j] - v) * k); } return stops[3][1]; };
+    await page.waitForFunction(() => document.querySelector('.sky .layer.in'));
+    const worst = await page.evaluate(async () => {
+      const W = window.innerWidth, H = window.innerHeight, cv = document.createElement('canvas');
+      cv.width = W; cv.height = H;
+      const g = cv.getContext('2d', { willReadFrequently: true });
+      const layers = document.querySelectorAll('.sky .layer');
+      for (const svg of layers[layers.length - 1].querySelectorAll('svg')) {
+        const clone = svg.cloneNode(true), wide = svg.classList.contains('clouds'), w = wide ? W * 1.12 : W;
+        clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg'); clone.setAttribute('width', w); clone.setAttribute('height', H);
+        const img = new Image();
+        img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(new XMLSerializer().serializeToString(clone));
+        await img.decode();
+        g.drawImage(img, wide ? -W * 0.06 : 0, 0, w, H);
+      }
+      const sun = layers[layers.length - 1].querySelector('.sun');
+      if (sun) {   // the sun is a soft disc of its own: paint it as the page does
+        const b = sun.getBoundingClientRect(), cx = b.left + b.width / 2, cy = b.top + b.height / 2, rad = b.width / 2, grad = g.createRadialGradient(cx, cy, 0, cx, cy, rad);
+        grad.addColorStop(0, '#FFFBEC'); grad.addColorStop(0.4, '#FFF1C6'); grad.addColorStop(0.5, 'rgba(255,226,150,.8)'); grad.addColorStop(1, 'rgba(255,205,120,0)');
+        g.globalAlpha = parseFloat(sun.style.opacity || 1); g.fillStyle = grad; g.fillRect(b.left, b.top, b.width, b.height); g.globalAlpha = 1;
+      }
+      const px = g.getImageData(0, 0, W, H).data;
+      const lum = (c) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]); };
+      const brightest = (x0, y0, x1, y1) => {
+        let best = [0, 0, 0], bl = -1;
+        x0 = Math.max(0, Math.floor(x0)); y0 = Math.max(0, Math.floor(y0)); x1 = Math.min(W - 1, Math.ceil(x1)); y1 = Math.min(H - 1, Math.ceil(y1));
+        const sx = Math.max(1, Math.floor((x1 - x0) / 24)), sy = Math.max(1, Math.floor((y1 - y0) / 12));
+        for (let y = y0; y <= y1; y += sy) for (let x = x0; x <= x1; x += sx) { const i = (y * W + x) * 4, c = [px[i], px[i + 1], px[i + 2]], l = lum(c); if (l > bl) { bl = l; best = c; } }
+        return best;
+      };
+      const whole = brightest(0, 0, W - 1, H - 1);
       const rgba = (s) => { const m = s.match(/-?[\d.]+(?:e-?\d+)?/g).map(Number), unit = /^color\(/.test(s); return { c: m.slice(0, 3).map((v) => (unit ? v * 255 : v)), a: m.length > 3 ? m[3] : 1 }; };
       const over = (top, a, under) => top.map((v, i) => v * a + under[i] * (1 - a));
-      const lum = (c) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]); };
-      let worst = { ratio: 99, text: '' };
+      let worst = { ratio: 99, need: 4.5, text: '' };
+      const view = document.querySelector('.page[aria-current], .screen'), top = view ? view.scrollTop : 0;
       const walker = document.createTreeWalker(document.querySelector('.app'), NodeFilter.SHOW_TEXT);
-      const view = document.querySelector('.page[aria-current], .screen');
       for (let n = walker.nextNode(); n; n = walker.nextNode()) {
         const el = n.parentElement;
         if (!n.textContent.trim() || !el.getClientRects().length || el.closest('.maplibregl-map, [hidden], .page:not([aria-current])')) continue;
         const box = el.getBoundingClientRect();
-        // The worst case for this text: the lightest sky it can sit over, which is the bottom of the window.
-        let bg = skyAt(Math.min(1, Math.max(0, (box.bottom + (view ? view.scrollTop : 0)) / window.innerHeight)));   // where it sits before any scrolling
-        if (el.closest('.card, .notice, .warn, .banner, .bar')) bg = skyAt(1);
+        // Text on the sky is judged where it rests before any scrolling; text on a card, against the brightest sky there is.
+        let bg = el.closest('.card, .notice, .warn, .banner, .bar') ? whole : brightest(box.left, box.top + top, box.right, box.bottom + top);
         const chain = [];
         for (let e = el; e && e !== document.body; e = e.parentElement) chain.unshift(e);
         for (const e of chain) { const b = rgba(getComputedStyle(e).backgroundColor); if (b.a > 0) bg = over(b.c, b.a, bg); }
@@ -155,11 +180,11 @@ const server = http.createServer((req, res) => {
         const a = lum(colour), b = lum(bg), ratio = (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
         const size = parseFloat(getComputedStyle(el).fontSize), weight = Number(getComputedStyle(el).fontWeight), large = size >= 24 || (size >= 18.66 && weight >= 700);
         const need = large ? 3 : 4.5;
-        if (ratio / need < worst.ratio / (worst.need || 4.5)) worst = { ratio, need, text: n.textContent.trim().slice(0, 30) };
+        if (ratio / need < worst.ratio / worst.need) worst = { ratio, need, text: n.textContent.trim().slice(0, 30) };
       }
       return worst;
     });
-    check(worst.ratio >= worst.need, `${what}: text contrast at least ${worst.need}:1 over the lightest sky (worst ${worst.ratio.toFixed(2)}:1, “${worst.text}”)`);
+    check(worst.ratio >= worst.need, `${what}: text contrast at least ${worst.need}:1 over the brightest sky behind it (worst ${worst.ratio.toFixed(2)}:1, “${worst.text}”)`);
   }
 
   // ---------- 1. First run ----------

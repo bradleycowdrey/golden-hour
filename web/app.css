@@ -13,7 +13,7 @@
   --bg: #1A1816; --ink: #15181E;
   --text: #FFFFFF; --t85: rgba(255,255,255,.88); --t70: rgba(255,255,255,.78);
   --hair: rgba(255,255,255,.2); --fill: rgba(255,255,255,.11); --fill-strong: rgba(255,255,255,.24);
-  --card: rgba(40,38,42,.66);
+  --card: rgba(32,30,34,.8);
   --amber: #F4B860; --cream: #FFF1E5; --muted: #B0A898; --alert: #FFB4A8;
   --font: Inter, -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
   --tabs-h: 64px;
@@ -42,7 +42,7 @@ h1, h2, h3, p { margin: 0; }
 .screen { flex: 1; min-width: 0; padding-bottom: calc(28px + env(safe-area-inset-bottom, 0px)); }
 .inner { width: 100%; max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: 12px; }
 .top h1 { font-size: 26px; font-weight: 500; letter-spacing: -.02em; }
-.tag { font-size: 13px; font-weight: 600; padding: 2px 7px; border-radius: 6px; background: rgba(255,255,255,.2); vertical-align: middle; letter-spacing: 0; text-transform: none; }
+.tag { font-size: 13px; font-weight: 600; padding: 2px 7px; border-radius: 6px; background: rgba(0,0,0,.3); vertical-align: middle; letter-spacing: 0; text-transform: none; }
 .card { min-width: 0; padding: 16px; border-radius: 18px; background: var(--card); -webkit-backdrop-filter: blur(24px); backdrop-filter: blur(24px); }
 .eyebrow { display: flex; align-items: center; gap: 6px; margin: 0 0 10px; font-size: 13px; font-weight: 600; line-height: 16px; letter-spacing: .02em; text-transform: uppercase; color: var(--t70); }
 .eyebrow .sp { flex: 1; }
@@ -305,7 +305,7 @@ table.cmp td button:hover { background: var(--fill-strong); }
 .hero .cond { margin: 0; font-size: 20px; font-weight: 500; line-height: 1.3; }
 .hero .cond.colour { display: block; padding: 0; background: none; border-radius: 0; white-space: normal; }
 .hero .cond.colour b { font-size: inherit; font-weight: 600; }
-.hero .cond.colour .n { font-size: inherit; font-weight: 500; color: inherit; opacity: .8; }
+.hero .cond.colour .n { font-size: inherit; font-weight: 500; color: inherit; opacity: 1; }
 .hero .cond.colour.c-brilliant b, .hero .cond.colour.c-rich b { color: #FFE3B5; }
 .hero .cond.colour.c-warm b { color: #FBD9B4; } .hero .cond.colour.c-soft b, .hero .cond.colour.c-muted b { color: #fff; }
 .hilo { display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 0 8px; margin: 0; font-size: 20px; font-weight: 500; line-height: 1.3; }
@@ -344,7 +344,7 @@ table.cmp td button:hover { background: var(--fill-strong); }
 .day .hi b { font-size: 16px; font-weight: 500; }
 .day .hi span { font-size: 13px; color: var(--t70); }
 .day .why { grid-column: 2 / span 3; font-size: 15px; color: var(--t70); }
-.day.outlook .sc, .day.outlook .hi b { opacity: .78; }
+.day.outlook .sc, .day.outlook .hi b { opacity: .9; }
 .day.outlook .cbar i { opacity: .55; }
 .day.on .d { color: #FFD08A; }
 @media (hover: hover) { button.day:hover .d { opacity: .8; } }
@@ -421,3 +421,25 @@ svg.moon { display: block; width: 30px; height: 30px; }
 .colour.sm { padding: 2px 9px; background: rgba(0,0,0,.3); }
 .colour.sm b { font-weight: 600; }
 /* Places and the bottom bar, in the same key. */
+
+/* ============ The sky ============
+   Behind every screen: the evening's sunset as it might look, in two layers that fade from one place to the
+   next. The clouds drift, slowly. */
+.sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+.sky { overflow: hidden; }
+.sky .layer { position: absolute; inset: 0; opacity: 0; transition: opacity .7s ease-in-out; }
+.sky .layer.in { opacity: 1; }
+.sky .layer svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: block; }
+.sky .layer svg.clouds { left: -6%; width: 112%; animation: drift 70s ease-in-out infinite alternate; will-change: transform; }
+@keyframes drift { from { transform: translate3d(-2.500%, 0, 0); } to { transform: translate3d(2.500%, 0, 0); } }
+@media (prefers-reduced-motion: reduce) { .sky .layer svg.clouds { animation: none; } }
+/* Icons: filled and in colour, drawn once in the page and used by name. */
+.hilo.verdict svg { width: 28px; height: 28px; }
+.day .ic svg { width: 28px; height: 28px; }
+.hour .ic svg { width: 32px; height: 32px; }
+.lrow .rt .v svg { width: 20px; height: 20px; }
+table.cmp td button svg { width: 20px; height: 20px; }
+.card .v svg { width: 20px; height: 20px; vertical-align: -4px; }
+/* The sun: low, soft-edged, the same size whatever the screen's shape. */
+.sky .sun { position: absolute; left: 50%; bottom: 2%; width: 34vmin; height: 34vmin; margin-left: -17vmin; border-radius: 50%;
+  background: radial-gradient(closest-side, #FFFBEC 0, #FFF1C6 40%, rgba(255,226,150,.8) 50%, rgba(255,205,120,0) 100%); }
