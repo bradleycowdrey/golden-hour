@@ -512,3 +512,41 @@ svg.horizon text { font: 500 14px var(--font); fill: rgba(255,255,255,.8); color
 .day.later { grid-template-columns: 1fr; min-height: 44px; }
 .day.later .why { grid-column: 1; font-size: 15px; color: var(--t85); }
 .sharecard b { font-size: 17px; font-weight: 600; }
+
+/* The picture of each kind of place: an illustrated icon on a soft tile, with its rank in a chip on the corner. */
+.sbadge { position: relative; width: 52px; height: 52px; border-radius: 15px; overflow: visible;
+  background: linear-gradient(160deg, rgba(255,255,255,.2), rgba(255,255,255,.06)); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.28), 0 4px 14px rgba(0,0,0,.25); }
+.sbadge > svg { width: 40px; height: 40px; filter: drop-shadow(0 1px 2px rgba(0,0,0,.25)); }
+.srow { grid-template-columns: 52px minmax(0, 1fr) 20px; gap: 14px; }
+.sbadge.c-easy { background: linear-gradient(160deg, #F9B97A, #D9566E); }
+.sbadge.c-adventurous { background: linear-gradient(160deg, #7CC39A, #2B6474); }
+.sbadge.c-dining { background: linear-gradient(160deg, #B996F0, #5E42AE); }
+.sbadge.c-own { background: linear-gradient(160deg, #F6A9C3, #B93F72); }
+.sbadge .rank { position: absolute; top: -7px; left: -7px; display: grid; place-items: center; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 11px;
+  background: #fff; color: #1B1B22; font-size: 13px; font-weight: 700; line-height: 1; box-shadow: 0 2px 6px rgba(0,0,0,.35); }
+.sbadge .rank.own { padding: 0; width: 22px; }
+.sbadge .rank.own svg { width: 16px; height: 16px; }
+.sbadge.big { width: 84px; height: 84px; border-radius: 24px; margin: 0 auto 12px; }
+.sbadge.big > svg { width: 64px; height: 64px; }
+
+/* ============ Golden Hour Places, as tiles ============
+   Each kind is its own frosted tile with a quiet accent: a glow at the top, a coloured title, the effort as a
+   tinted pill. Side by side where there is room. */
+.spotcard { --acc: #F9B97A; background-image: linear-gradient(to bottom, color-mix(in srgb, var(--acc) 18%, transparent), transparent 44%); }
+.spotcard.a-easy { --acc: #F9B97A; } .spotcard.a-adventurous { --acc: #7CC39A; } .spotcard.a-dining { --acc: #B996F0; } .spotcard.a-own { --acc: #F6A9C3; }
+.spotcard .eyebrow { color: color-mix(in srgb, var(--acc) 62%, white); }
+.spotcard .eyebrow > svg { width: 16px; height: 16px; }
+.srow { min-height: 76px; padding: 12px 0; }
+.srow .n { font-size: 17px; font-weight: 600; letter-spacing: -.01em; }
+.srow .e { align-self: flex-start; margin-top: 4px; padding: 2px 9px; border-radius: 980px; font-size: 13px; font-weight: 600; line-height: 18px; }
+.e-easy { color: #C9F2D2; background: rgba(76,175,110,.28); }
+.e-low { color: #E7DBFF; background: rgba(150,110,230,.32); }
+.e-medium { color: #FFE2B0; background: rgba(240,160,60,.28); }
+.e-high { color: #FFD0C4; background: rgba(230,90,70,.3); }
+.e-own { color: #FFE0EC; background: rgba(220,90,140,.3); }
+.srow:active .sbadge { transform: scale(.96); }
+.sbadge { transition: transform .15s; }
+.spotgrid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
+@media (min-width: 760px) { .spotgrid.wide { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; } }
+@media (min-width: 1000px) { .spotgrid { grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: start; } .spotgrid.wide { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.sechead h3 { font-size: 28px; }

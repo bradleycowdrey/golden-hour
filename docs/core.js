@@ -542,7 +542,8 @@
     const a = (r) => `around:${r},${lat.toFixed(4)},${lon.toFixed(4)}`, notable = '[~"^(wikidata|wikipedia)$"~"."]';
     return `[out:json][timeout:25][maxsize:33554432];(` +
       `nwr(${a(25000)})[tourism=viewpoint][name];nwr(${a(25000)})[man_made=pier][name];nwr(${a(25000)})[natural=beach][name];` +
-      `nwr(${a(25000)})[leisure=park][name]${notable};nwr(${a(25000)})[name~"sunset",i][~"^(tourism|leisure|natural|man_made)$"~"."];` +
+      `nwr(${a(25000)})[leisure=park][name]${notable};nwr(${a(25000)})[man_made=lighthouse][name];nwr(${a(25000)})[man_made=tower]["tower:type"=observation][name];` +
+      `nwr(${a(25000)})[leisure=marina][name];nwr(${a(25000)})[leisure=garden][name]${notable};nwr(${a(25000)})[natural=water][name]${notable};nwr(${a(25000)})[natural=cliff][name];nwr(${a(25000)})[name~"sunset",i][~"^(tourism|leisure|natural|man_made)$"~"."];` +
       `)->.easy;(nwr(${a(70000)})[natural=peak][name]${notable};nwr(${a(70000)})[tourism=viewpoint][name]${notable};nwr(${a(20000)})[natural=peak][name];)->.adv;(` +
       `nwr(${a(15000)})[amenity~"^(bar|pub|restaurant|cafe|biergarten)$"][name][outdoor_seating~"^(yes|rooftop|roof|terrace|balcony)$"];` +
       `nwr(${a(15000)})[amenity~"^(bar|pub|restaurant|cafe)$"][name][rooftop=yes];` +
@@ -582,8 +583,10 @@
         score -= km * 0.35;
       } else {
         cat = 'easy'; effort = 'easy';
-        kind = t.tourism === 'viewpoint' ? 'Viewpoint' : t.man_made === 'pier' ? 'Pier' : t.natural === 'beach' ? 'Beach' : t.leisure === 'park' ? 'Park' : 'Landmark';
-        score += { Viewpoint: 16, Pier: 13, Beach: 13, Park: 5, Landmark: 8 }[kind];
+        kind = t.tourism === 'viewpoint' ? 'Viewpoint' : t.man_made === 'pier' ? 'Pier' : t.natural === 'beach' ? 'Beach' : t.man_made === 'lighthouse' ? 'Lighthouse'
+          : t.man_made === 'tower' ? 'Lookout tower' : t.leisure === 'marina' || t.harbour === 'yes' ? 'Harbour' : t.natural === 'cliff' ? 'Cliff' : t.natural === 'water' ? 'Lake'
+          : t.leisure === 'garden' ? 'Garden' : t.leisure === 'park' ? 'Park' : 'Landmark';
+        score += { Viewpoint: 16, Pier: 13, Beach: 13, Lighthouse: 14, 'Lookout tower': 14, Harbour: 11, Cliff: 12, Lake: 10, Garden: 5, Park: 5, Landmark: 8 }[kind];
         if (t.tourism === 'attraction') score += 8;
         score -= km * 0.9;
       }
@@ -594,7 +597,8 @@
         if (Number.isFinite(d)) { faces = Math.abs(normalize(d - o.facing + 180) - 180) <= 60; score += faces ? 12 : -10; }
       }
       const website = t.website || t['contact:website'] || null, phone = t.phone || t['contact:phone'] || null;
-      out[cat].push({ id: key, name, cat, kind, effort, km, travel: travelMinutes(km), score: Math.round(score * 10) / 10, lat, lon, famous, sunsetNamed, faces,
+      const rooftop = cat === 'dining' && (t.rooftop === 'yes' || /^(rooftop|roof)$/.test(t.outdoor_seating || '') || /rooftop|roof/i.test(name));
+      out[cat].push({ id: key, name, cat, kind, rooftop, effort, km, travel: travelMinutes(km), score: Math.round(score * 10) / 10, lat, lon, famous, sunsetNamed, faces,
         ele, gain: gain == null ? null : Math.round(gain), website: website && /^https?:\/\//.test(website) ? website : null, phone, hours: t.opening_hours || null,
         wheelchair: t.wheelchair || null, fee: t.fee || null, dog: t.dog || null });
     }

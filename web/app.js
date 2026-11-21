@@ -1059,10 +1059,19 @@
     chev: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.200" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     car: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 16V11l2-5h10l2 5v5M3.500 11h17M5 16h14v2.500H5zM7.500 13.500h.01M16.500 13.500h.01" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   };
+  /** The picture for a kind of place; a pin for anything else. */
+  const KIND_ICON = { Viewpoint: 'viewpoint', Pier: 'pier', Beach: 'beach', Park: 'park', Garden: 'garden', Lake: 'lake', Lighthouse: 'lighthouse', 'Lookout tower': 'tower',
+    Cliff: 'cliff', Harbour: 'harbour', Landmark: 'landmark', Summit: 'summit', Restaurant: 'restaurant', Bar: 'bar', Pub: 'pub', 'Café': 'cafe', 'Beer garden': 'beergarden',
+    'Open ground': 'park', Waterside: 'lake', 'Summit or viewpoint': 'summit', 'Restaurant or bar': 'restaurant' };
+  function kindIconName(s) {
+    if (s.cat === 'dining' && s.rooftop && s.kind !== 'Café') return 'rooftop';
+    return KIND_ICON[s.kind] || (s.type && { outdoor: 'park', water: 'lake', peak: 'summit', venue: 'restaurant' }[s.type]) || 'pin';
+  }
+  const kindIcon = (s) => `<svg viewBox="0 0 40 40" aria-hidden="true"><use href="#k-${kindIconName(s)}"/></svg>`;
   const catIcon = (cat) => SP[{ easy: 'landmark', adventurous: 'peak', dining: 'dining', own: 'heart' }[cat] || 'landmark'];
   /** Places a sample location shows without asking the network, so the first look has something in it. */
   const SAMPLE_SPOTS = (() => {
-    const mk = (cat, name, kind, lat, lon, extra) => ({ id: 'sample/' + name, name, cat, kind, lat, lon, famous: true, sunsetNamed: /sunset/i.test(name), faces: null, sample: true, ...extra });
+    const mk = (cat, name, kind, lat, lon, extra) => ({ id: 'sample/' + name, name, cat, kind, lat, lon, famous: true, sunsetNamed: /sunset/i.test(name), faces: null, sample: true, rooftop: /rooftop/i.test(name), ...extra });
     return {
       easy: [mk('easy', 'Inspiration Point Park', 'Viewpoint', 39.7826, -105.0566), mk('easy', 'Sloan’s Lake Park', 'Park', 39.7499, -105.0453), mk('easy', 'Cheesman Park Pavilion', 'Park', 39.7329, -104.9668),
         mk('easy', 'Riverside Cemetery Overlook', 'Viewpoint', 39.7856, -104.9671), mk('easy', 'Ruby Hill Park', 'Park', 39.6865, -105.0007), mk('easy', 'Sunset Park', 'Park', 39.6981, -104.8767)],
@@ -1113,8 +1122,8 @@
   function spotRow(s, p, i) {
     const effort = s.cat === 'own' ? 'Your spot' : s.cat === 'dining' ? 'May need a booking' : EFFORT[s.effort] || '';
     return `<button type="button" class="srow" data-act="spot-open" data-id="${esc(s.id)}" data-place="${esc(p.id)}">
-      <span class="sbadge c-${s.cat}${i != null ? ' ranked' : ''}">${i != null ? `<b>${i + 1}</b>` : catIcon(s.cat)}</span>
-      <span class="sl"><span class="n">${esc(s.name)}</span><span class="r">${esc(s.kind || G.SPOT_CAT[s.cat] || '')} · ${away(s)}</span><span class="e e-${esc(s.effort || 'own')}">${esc(effort)}</span></span>
+      <span class="sbadge c-${s.cat} k-${kindIconName(s)}" aria-hidden="true">${kindIcon(s)}${i != null ? `<b class="rank">${i + 1}</b>` : s.cat === 'own' ? '<b class="rank own"><svg viewBox="0 0 40 40"><use href="#k-heart"/></svg></b>' : ''}</span>
+      <span class="sl"><span class="n">${esc(s.name)}</span><span class="r">${esc(s.kind || G.SPOT_CAT[s.cat] || '')} · ${away(s)}</span><span class="e e-${esc(s.cat === 'own' ? 'own' : s.effort || 'own')}">${esc(effort)}</span></span>
       <span class="chev">${SP.chev}</span></button>`;
   }
   /** At the foot of each location's page: the top three of each kind, and the way in to all of them. */
@@ -1124,11 +1133,11 @@
     let body;
     if (!s && d.spots === 'error') body = `<section class="card"><p>Couldn’t load places near ${esc(p.name)}.</p><div class="row" data-gap><button type="button" class="btn" data-act="spots-retry">Try again</button></div></section>`;
     else if (!s) body = `<section class="card skeleton" aria-busy="true"><p class="muted">Finding sunset places near ${esc(p.name)}…</p><div class="bone" data-w="70"></div><div class="bone" data-w="55"></div></section>`;
-    else body = CATS.map((c) => {
+    else body = '<div class="spotgrid">' + CATS.map((c) => {
       const list = s[c.key].slice(0, 3);
-      return `<section class="card spotcard"><p class="eyebrow">${SP[c.icon]}<span>${c.title}</span><span class="sp"></span><span class="aside">${s[c.key].length ? `Top ${list.length}` : ''}</span></p>
+      return `<section class="card spotcard a-${c.key}"><p class="eyebrow">${SP[c.icon]}<span>${c.title}</span><span class="sp"></span><span class="aside">${s[c.key].length ? `Top ${list.length}` : ''}</span></p>
         ${list.length ? list.map((x, i) => spotRow(x, p, i)).join('') : `<p class="small muted">None found nearby in open map data.</p>`}</section>`;
-    }).join('') + (mine.length ? `<section class="card spotcard"><p class="eyebrow">${SP.heart}<span>Your spots</span></p>${mine.slice(0, 3).map((x) => spotRow(x, p)).join('')}</section>` : '');
+    }).join('') + (mine.length ? `<section class="card spotcard a-own"><p class="eyebrow">${SP.heart}<span>Your spots</span></p>${mine.slice(0, 3).map((x) => spotRow(x, p)).join('')}</section>` : '') + '</div>';
     return `<section class="ghplaces" aria-label="Golden Hour Places">${head}${body}
       <div class="cta"><button type="button" class="btn white" data-act="spots-all" data-place="${esc(p.id)}">See all Golden Hour Places</button></div></section>`;
   }
@@ -1139,17 +1148,17 @@
     skyOf(p);
     const part = (c, list) => {
       const open = v.expanded[c.key], shown = open ? list : list.slice(0, 5);
-      return `<section class="card spotcard"><p class="eyebrow">${SP[c.icon]}<span>${c.title}</span></p><p class="catsub">${c.sub}</p>
+      return `<section class="card spotcard a-${c.key}"><p class="eyebrow">${SP[c.icon]}<span>${c.title}</span></p><p class="catsub">${c.sub}</p>
         ${shown.length ? shown.map((x, i) => spotRow(x, p, i)).join('') : '<p class="small muted">None found nearby in open map data.</p>'}
         ${list.length > 5 ? `<button type="button" class="more" data-act="spots-more" data-k="${c.key}">${open ? 'Show fewer' : `Show ${list.length - 5} more`}</button>` : ''}</section>`;
     };
     const lists = !s ? `<section class="card">${d.spots === 'error' ? `<p>Couldn’t load places near ${esc(p.name)}.</p><div class="row" data-gap><button type="button" class="btn" data-act="spots-retry">Try again</button></div>` : `<p class="muted">Finding sunset places near ${esc(p.name)}…</p>`}</section>`
-      : CATS.map((c) => part(c, s[c.key])).join('');
+      : `<div class="spotgrid wide">${CATS.map((c) => part(c, s[c.key])).join('')}</div>`;
     return `<div class="row top"><button type="button" class="btn quiet back" data-act="close-view">‹ ${esc(p.name)}</button><span class="sp"></span>
         <button type="button" class="circle" data-act="share-app" aria-label="Share Golden Hour">${SP.share}</button></div>
       <header class="screenhead"><h1>Golden Hour Places</h1><p>Where to watch the sunset near ${esc(p.name)}${p.sample ? ' (sample)' : ''}</p></header>
       ${lists}
-      <section class="card spotcard"><p class="eyebrow">${SP.heart}<span>Your spots</span></p><p class="catsub">Places you love to watch from. Only on this device.</p>
+      <section class="card spotcard a-own"><p class="eyebrow">${SP.heart}<span>Your spots</span></p><p class="catsub">Places you love to watch from. Only on this device.</p>
         ${mine.length ? mine.map((x) => spotRow(x, p)).join('') : '<p class="small muted">None yet.</p>'}
         <div class="row" data-gap><button type="button" class="btn white" data-act="spot-add" data-place="${esc(p.id)}">Add your own spot</button></div></section>
       <p class="small credit">${p.sample ? 'Sample places. ' : ''}From OpenStreetMap: well-known places, and places named for the sunset, come first. Effort is estimated from how high a place is above ${esc(p.name)}.</p>`;
@@ -1177,7 +1186,7 @@
     const links = [sp.website ? `<a class="btn" href="${esc(sp.website)}" target="_blank" rel="noopener">Website</a>` : '', sp.phone ? `<a class="btn" href="tel:${esc(sp.phone.replace(/[^\d+]/g, ''))}">Call to book</a>` : ''].join('');
     return `<div class="row top"><button type="button" class="btn quiet back" data-act="close-view">‹ ${v.from === 'all' ? 'Golden Hour Places' : esc(p.name)}</button><span class="sp"></span>
         <button type="button" class="circle" data-act="share-spot" aria-label="Share ${esc(sp.name)}">${SP.share}</button></div>
-      <section class="hero spothero"><span class="sbadge big c-${sp.cat}">${catIcon(sp.cat)}</span><h2>${esc(sp.name)}</h2><p class="when">${esc(sp.kind || G.SPOT_CAT[sp.cat] || 'Your spot')} · ${esc(effort)}</p>${v.shared ? '<p class="when">Shared with you</p>' : ''}</section>
+      <section class="hero spothero"><span class="sbadge big c-${sp.cat} k-${kindIconName(sp)}" aria-hidden="true">${kindIcon(sp)}</span><h2>${esc(sp.name)}</h2><p class="when">${esc(sp.kind || G.SPOT_CAT[sp.cat] || 'Your spot')} · ${esc(effort)}</p>${v.shared ? '<p class="when">Shared with you</p>' : ''}</section>
       <div class="cta row center"><button type="button" class="btn primary" data-act="spot-plan">Plan this evening here</button><a class="btn white" target="_blank" rel="noopener" href="${esc(directionsUrl(sp))}">${SP.car}Directions</a></div>
       <div class="two"><div class="col">
         <section class="card"><p class="eyebrow">${SP.landmark}<span>Where</span></p><div class="map" id="map"><div class="msg">Loading the map…</div></div></section>
@@ -1462,7 +1471,7 @@
       render();
     },
     async 'spot-save'() {
-      const sp = S.view.spot, own = { id: 'own-' + now().toString(36), name: sp.name, cat: 'own', kind: sp.kind || 'Your spot', type: TYPE_OF_SPOT(sp), lat: sp.lat, lon: sp.lon, ele: sp.ele == null ? null : sp.ele, createdAt: now() };
+      const sp = S.view.spot, own = { id: 'own-' + now().toString(36), name: sp.name, cat: 'own', kind: sp.kind || 'Your spot', rooftop: !!sp.rooftop, type: TYPE_OF_SPOT(sp), lat: sp.lat, lon: sp.lon, ele: sp.ele == null ? null : sp.ele, createdAt: now() };
       if (db.isBlocked()) return toast('Spots can’t be saved in this browser mode');
       S.spots.push(own); await db.put('spots', own); render(); toast('Saved to your spots');
     },

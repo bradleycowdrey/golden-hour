@@ -1,6 +1,6 @@
 # Golden Hour: plan and spec
 
-Version 14. An app by Bradley Cowdrey, in the same family as Two Degrees, Bearings and Meridian. Items marked **(verify)** come from memory or secondary sources
+Version 15. An app by Bradley Cowdrey, in the same family as Two Degrees, Bearings and Meridian. Items marked **(verify)** come from memory or secondary sources
 and must be checked against primary documentation before they are relied on.
 
 **How to read this.** Sections 1 to 3 and 12 to 15 are the plan: what it is, the order of work, how
@@ -621,6 +621,15 @@ screen, and "See all Golden Hour Places".
   accepts files, a picture of the sky with the score and times (drawn ahead of the tap, because phones
   only open the share sheet straight from a tap). Every place has a share button (`#s=` link that opens
   that place). Locations and Golden Hour Places offer "Share Golden Hour".
+- **Each place has a picture of its kind**: an illustrated icon on a tile coloured for its part (warm for
+  landmarks, green for adventurous, violet for dining, pink for your spots), with its rank in a white
+  chip on the corner. There is one icon for each kind: viewpoint, beach, pier, park, garden, lake,
+  lighthouse, lookout tower, cliff, harbour, landmark, summit, restaurant, bar, pub, café, beer garden
+  and rooftop, and a pin for anything else. The query also finds lighthouses, observation towers,
+  marinas, cliffs, and notable gardens and lakes.
+- **The cards are tiles**: each part has its own accent (a glow at the top and a coloured title), effort
+  is a tinted pill (green easy, amber medium, red high, violet "May need a booking", pink your spot),
+  and the parts sit side by side where there is room (three across from 1,000 px).
 - The saved cities are now called **Locations**; "Golden Hour Places" means places to watch from.
 - **The evenings ahead** lists only the rated evenings, then one line: "[Day, date] and beyond: too
   early to call".
