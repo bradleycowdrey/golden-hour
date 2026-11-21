@@ -1,1 +1,86 @@
-# golden-hour
+<p align="center"><img src="web/icon.png" width="128" alt="Golden Hour icon"></p>
+
+<h1 align="center">Golden Hour</h1>
+<p align="center"><b>Which evenings are worth it, and a plan for the ones that are.</b><br>
+A free, open-source sunset forecast and evening planner for the web. No ads, no account, no tracking.<br>
+Made by <a href="https://bradcowdrey.com">Bradley Cowdrey · bradcowdrey.com</a></p>
+
+---
+
+Golden Hour rates every coming sunset from 0.0 to 5.0 stars for the places you care about, says which
+evenings to go and which to skip, and on the good ones plans the outing: where you'll watch from, when to
+leave, what to bring, and when to head home. It is in the same family as
+[Two Degrees](https://github.com/bradleycowdrey/two-degrees) and
+[Bearings](https://github.com/bradleycowdrey/bearings), and shows imperial and metric side by side.
+
+This is **Release 1** of the plan in [docs/SPEC.md](docs/SPEC.md). Version 0.1.0.
+
+## What it does
+
+- **A star rating for each evening**, with a verdict (Go, Maybe, Skip), a range, and one plain sentence of
+  why. It reads cloud at three heights here and up to 300 km toward the sunset, haze, wind and how the
+  temperature compares with what is usual for the place. Tap to see the four parts behind the score.
+- **The evening's times**: golden hour, the best window, sunset, the afterglow and last light.
+- **The week**: six rated evenings, the best one marked, and four more with their sunset times. Days three
+  to five are an outlook; beyond that it says "Too early to call".
+- **Compare places** side by side for the same evenings.
+- **A plan for a spot you pin on the map**: leave by, meet at, sunset, stay until, head back by; what to
+  bring, each with a reason; and the walk back, last light and the moon.
+- **Share the plan with one link.** The link never carries where you are leaving from.
+- **Add to calendar**, as a file any calendar opens.
+- **Works offline** once opened, including saved plans.
+- **"How was it?"** after last light, kept on your device, to tune the rating against real evenings.
+
+## Privacy
+
+Golden Hour has no accounts and collects nothing. To get forecasts and places, your device sends
+coordinates to Open-Meteo and the map tile host. Fonts and the map library are served from this site.
+Places, plans and your sunset log stay in your browser.
+
+## Run it
+
+```sh
+git clone https://github.com/bradleycowdrey/golden-hour.git
+cd golden-hour
+scripts/build-web.sh                 # web/ → docs/, with the version stamped in
+npx serve docs                       # then open the address it prints
+```
+
+`web/` holds the source: `index.html`, `app.css`, `core.js` (the rules: pure functions, no network or
+page) and `app.js` (fetching, storage and the interface). `docs/` is what GitHub Pages serves; never edit
+it by hand. Bump `VERSION` and rebuild to release.
+
+## Testing
+
+- `node --test tests/core.test.js`: the rating against golden vectors (`tests/fixtures/vectors.json`,
+  to be shared with the Swift and Kotlin ports), every threshold and cap, the reason sentences, evening
+  times at several latitudes, plan times, the bring list, the share link and the calendar file.
+- `node tests/web.test.js [screenshots-dir]`: drives the built app in a browser (Playwright) with a
+  stand-in forecast: first run, search, the rating and times, the week, compare, the whole plan flow,
+  sharing, the calendar file, offline, every listed state, layout and tap targets at four widths, and
+  text contrast over the lightest sky.
+
+## Not yet verified on real services
+
+The tests answer Open-Meteo and the map tiles themselves. Before relying on it, check on a real phone
+and connection: live forecast, air-quality and archive requests; map tiles from OpenFreeMap; the share
+sheet and calendar file on iOS Safari and Android Chrome. The rating's weights are starting values,
+to be tuned from at least 20 logged evenings (docs/SPEC.md, section 12).
+
+## Credits
+
+Weather by [Open-Meteo](https://open-meteo.com) (CC BY 4.0); air quality from CAMS. Maps by
+[OpenFreeMap](https://openfreemap.org), © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright),
+drawn with [MapLibre](https://maplibre.org) (BSD-3-Clause). Places from [GeoNames](https://www.geonames.org)
+(CC BY 4.0). Sun and moon after SunCalc by Vladimir Agafonkin (BSD-2-Clause). Inter is under the SIL
+Open Font License.
+
+## Terms and privacy
+
+Using Golden Hour means agreeing to the [Terms of Use and Privacy](https://bradcowdrey.com/legal), which
+cover every app Bradley Cowdrey publishes. In short: it's free and provided as is, a forecast is not a
+promise, and you use it at your own risk.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

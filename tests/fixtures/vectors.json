@@ -1,0 +1,17 @@
+{
+  "about": "Golden test vectors for the star rating (docs/SPEC.md section 4.3). Shared with the Swift and Kotlin ports. Unless a row says otherwise: humidity 50%, wind 2 m/s, gusts 3 m/s, feels like the evening normal (18 C), clean air (aod 0.1), no cloud upstream.",
+  "base": { "low": 0, "mid": 0, "high": 0, "visibility": 40000, "humidity": 50, "precipitation": 0, "rainChance": 0, "codes": [1, 1],
+    "apparent": 18, "wind": 2, "gusts": 3, "aod": 0.1, "pm25": 5, "aqi": 30,
+    "up": [{ "low": 0, "mid": 0, "high": 0 }, { "low": 0, "mid": 0, "high": 0 }, { "low": 0, "mid": 0, "high": 0 }, { "low": 0, "mid": 0, "high": 0 }] },
+  "normal": 18,
+  "vectors": [
+    { "name": "50% high cloud, clear to the west, clean, calm", "set": { "high": 50 }, "c": 1.0, "s": 1.0, "a": 1.0, "k": 1.0, "gate": 1.0, "stars": 5.0, "verdict": "go" },
+    { "name": "Cloudless, clean, calm", "set": {}, "c": 0.3, "s": 1.0, "a": 1.0, "k": 1.0, "gate": 1.0, "stars": 3.6, "verdict": "go" },
+    { "name": "Vivid sky, wind 9 m/s", "set": { "high": 50, "wind": 9, "gusts": 12 }, "c": 1.0, "s": 1.0, "a": 1.0, "k": 0.4, "gate": 1.0, "stars": 4.4, "verdict": "go" },
+    { "name": "50% high cloud, 80% low cloud 100 km west", "set": { "high": 50 }, "up": { "1": { "low": 80 } }, "c": 0.4, "s": 0.0, "a": 1.0, "k": 1.0, "gate": 0.53, "stars": 1.9, "verdict": "skip" },
+    { "name": "Hazy (aod 0.6), 40% mid cloud, calm", "set": { "mid": 40, "aod": 0.6 }, "c": 1.0, "s": 1.0, "a": 0.2, "k": 1.0, "gate": 1.0, "stars": 4.2, "verdict": "go" },
+    { "name": "84% low cloud everywhere", "set": { "low": 84 }, "up": { "0": { "low": 84 }, "1": { "low": 84 }, "2": { "low": 84 }, "3": { "low": 84 } }, "c": 0.02, "s": 0.0, "a": 1.0, "k": 1.0, "gate": 0.03, "stars": 0.1, "verdict": "skip" },
+    { "name": "95% high cloud, clear strip to the west", "set": { "high": 95 }, "c": 1.0, "s": 1.0, "a": 1.0, "k": 1.0, "gate": 1.0, "stars": 5.0, "verdict": "go" },
+    { "name": "95% high cloud, 60% low cloud 300 km west", "set": { "high": 95 }, "up": { "3": { "low": 60 } }, "c": 0.2, "s": 1.0, "a": 1.0, "k": 1.0, "gate": 0.93, "stars": 3.3, "verdict": "maybe" }
+  ]
+}

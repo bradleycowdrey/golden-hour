@@ -1,0 +1,17 @@
+name: Tests
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --test tests/core.test.js
+      - run: scripts/build-web.sh && git diff --exit-code docs
+      - run: npm install --no-save playwright@1 && npx playwright install --with-deps chromium
+      - run: node tests/web.test.js
