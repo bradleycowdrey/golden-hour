@@ -8,6 +8,7 @@ const http = require('http');
 let playwright;
 try { playwright = require('playwright'); } catch { playwright = require(path.join(require('child_process').execSync('npm root -g').toString().trim(), 'playwright')); }
 const G = require('../web/core.js');
+const G_decode = (text) => { const sp = G.decodeSpot(text.split('#s=')[1] || ''); return !!sp && sp.name === 'Linger'; };
 
 const ROOT = path.join(__dirname, '..', 'docs');
 const SHOTS = process.argv[2];
@@ -15,6 +16,20 @@ const NOON = Date.UTC(2026, 5, 20, 18, 0);              // 12:00 in Denver
 const HOUR = 3600000, MIN = 60000;
 const DENVER = { name: 'Denver', admin1: 'Colorado', country: 'United States', latitude: 39.7392, longitude: -104.9903, timezone: 'America/Denver' };
 const BOULDER = { name: 'Boulder', admin1: 'Colorado', country: 'United States', latitude: 40.015, longitude: -105.2705, timezone: 'America/Denver' };
+const OSM = [
+  { type: 'node', id: 1, lat: 39.7826, lon: -105.0566, tags: { name: 'Inspiration Point', tourism: 'viewpoint', wikidata: 'Q1' } },
+  { type: 'node', id: 2, lat: 39.75, lon: -105.04, tags: { name: 'Sunset Park', leisure: 'park' } },
+  { type: 'way', id: 3, center: { lat: 39.749, lon: -105.045 }, tags: { name: 'Sloan’s Lake Park', leisure: 'park', wikipedia: 'en:Sloan' } },
+  { type: 'node', id: 4, lat: 39.75, lon: -105.03, tags: { name: 'Lakeside Pier', man_made: 'pier' } },
+  { type: 'node', id: 5, lat: 39.73, lon: -104.97, tags: { name: 'City Viewpoint', tourism: 'viewpoint' } },
+  { type: 'node', id: 6, lat: 39.70, lon: -105.00, tags: { name: 'Ruby Hill Viewpoint', tourism: 'viewpoint' } },
+  { type: 'node', id: 7, lat: 39.7322, lon: -105.2392, tags: { name: 'Lookout Mountain', natural: 'peak', ele: '2190', wikidata: 'Q2' } },
+  { type: 'node', id: 8, lat: 39.6935, lon: -105.1488, tags: { name: 'Green Mountain', natural: 'peak', ele: '2005' } },
+  { type: 'node', id: 9, lat: 39.5883, lon: -105.6438, tags: { name: 'Mount Evans', natural: 'peak', ele: '4348', wikipedia: 'en:Evans' } },
+  { type: 'node', id: 10, lat: 39.7597, lon: -105.0113, tags: { name: 'Linger', amenity: 'restaurant', outdoor_seating: 'rooftop', website: 'https://example.com/linger', phone: '+1 303 555 0100' } },
+  { type: 'node', id: 11, lat: 39.7637, lon: -105.0102, tags: { name: 'Sky Bar', amenity: 'bar', rooftop: 'yes' } },
+  { type: 'node', id: 12, lat: 39.74, lon: -104.99, tags: { name: 'Terrace Café', amenity: 'cafe', outdoor_seating: 'terrace' } },
+];
 const TROMSO = { name: 'Tromsø', admin1: 'Troms', country: 'Norway', latitude: 69.6492, longitude: 18.9553, timezone: 'Europe/Oslo' };
 
 let passed = 0, failed = 0;
@@ -61,14 +76,14 @@ const server = http.createServer((req, res) => {
   const BASE = `http://localhost:${server.address().port}/`;
   const browser = await playwright.chromium.launch({ args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader'] });
   const problems = [];
-  const net = { forecast: 'ok', geocode: 'ok', tiles: 'ok', calls: [] };
+  const net = { forecast: 'ok', geocode: 'ok', tiles: 'ok', overpass: 'ok', calls: [] };
 
   async function open(opts) {
     const o = opts || {};
     const context = o.context || await browser.newContext({ viewport: o.viewport || { width: 390, height: 844 }, locale: 'en-US', timezoneId: 'America/Denver', serviceWorkers: 'block',
       permissions: ['clipboard-read', 'clipboard-write'].concat(o.geo ? ['geolocation'] : []), geolocation: o.geo || undefined, deviceScaleFactor: 1 });
     if (!o.context) {
-      await context.route(/open-meteo\.com|openfreemap\.org/, (route) => {
+      await context.route(/open-meteo\.com|openfreemap\.org|overpass/, (route) => {
         const url = new URL(route.request().url());
         net.calls.push(url.href);
         const json = (body) => route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(body) });
@@ -80,6 +95,7 @@ const server = http.createServer((req, res) => {
         if (url.hostname === 'api.open-meteo.com') return net.forecast === 'ok' ? json(forecastBody(url)) : route.abort();
         if (url.hostname === 'air-quality-api.open-meteo.com') return net.forecast === 'ok' ? json(airBody()) : route.abort();
         if (url.hostname === 'archive-api.open-meteo.com') return json(archiveBody());
+        if (/overpass/.test(url.hostname)) return net.overpass === 'down' ? route.abort() : json({ elements: OSM });
         if (url.hostname === 'tiles.openfreemap.org') {
           if (net.tiles !== 'ok') return route.abort();
           return json({ version: 8, sources: {}, layers: [{ id: 'bg', type: 'background', paint: { 'background-color': '#2B4A4A' } }] });
@@ -274,7 +290,7 @@ const server = http.createServer((req, res) => {
       permissions: ['clipboard-read', 'clipboard-write'], deviceScaleFactor: 1, acceptDownloads: true });
     const seed = await open({ viewport: { width: 390, height: 844 } });   // only to borrow the route handler
     await seed.context.close();
-    await context.route(/open-meteo\.com|openfreemap\.org/, async (route) => {
+    await context.route(/open-meteo\.com|openfreemap\.org|overpass/, async (route) => {
       const url = new URL(route.request().url());
       net.calls.push(url.href);
       const json = (body) => route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(body) });
@@ -282,6 +298,7 @@ const server = http.createServer((req, res) => {
       if (url.hostname === 'api.open-meteo.com') return net.forecast === 'ok' ? json(forecastBody(url)) : route.abort();
       if (url.hostname === 'air-quality-api.open-meteo.com') return net.forecast === 'ok' ? json(airBody()) : route.abort();
       if (url.hostname === 'archive-api.open-meteo.com') return json(archiveBody());
+      if (/overpass/.test(url.hostname)) return net.overpass === 'down' ? route.abort() : json({ elements: OSM });
       if (url.hostname === 'tiles.openfreemap.org') return net.tiles === 'ok' ? json({ version: 8, sources: {}, layers: [{ id: 'bg', type: 'background', paint: { 'background-color': '#2B4A4A' } }] }) : route.abort();
       return route.abort();
     });
@@ -293,13 +310,13 @@ const server = http.createServer((req, res) => {
     const { page, context } = await withDenver();
     await page.waitForSelector(CUR + '.hero .score');
     const rows = page.locator(CUR + '.day');
-    check(await rows.count() === 10, 'each place’s page lists ten evenings');
+    check(await rows.count() === 7, 'each place’s page lists the six rated evenings and one line for the rest');
     check(await page.locator(CUR + 'button.day').count() === 6, 'six are rated');
     check(/outlook/.test(await rows.nth(4).getAttribute('class')) && /^\d\.[05]$/.test(await rows.nth(4).locator('.sc').innerText()) && !/outlook/.test(await rows.nth(1).getAttribute('class')), 'outlook rows are dimmed and rounded to half a star');
     const bars = await page.locator(CUR + 'button.day .cbar i').evaluateAll((els) => els.map((e) => Math.round(parseFloat(e.style.width))));
     check(bars.length === 6 && bars.every((w, i) => w === Math.max(3, expectedDenver(i).rating.colour)), 'each rated evening has a bar for its colour score, on one scale');
     check(await page.locator(CUR + 'button.day').evaluateAll((els) => els.every((e) => e.getBoundingClientRect().height <= 64)), 'one line an evening');
-    check((await rows.nth(7).innerText()).includes('Too early to call') && /Sunset \d/.test(await rows.nth(7).innerText()), 'later rows show the sunset time and “Too early to call”');
+    check(/^Friday, Jun 26 and beyond: too early to call$/.test((await rows.nth(6).innerText()).trim()), 'one line: “Friday, Jun 26 and beyond: too early to call”');
     check(await page.locator(CUR + '.best').count() <= 1, 'at most one best evening');
     const exp = [0, 1, 2].map((d) => expectedDenver(d).rating).filter((r) => r.verdict === 'go').sort((a, b) => b.score - a.score)[0];
     check(!exp || (await page.locator(CUR + '.day:has(.best) .sc').innerText()) === exp.score.toFixed(1), 'the best evening is the highest Go among tonight and the next two');
@@ -352,6 +369,97 @@ const server = http.createServer((req, res) => {
     await page.locator('.lrow').nth(1).click();
     check((await text(page, CUR + '.hero h2')) === 'Boulder', 'the list: tapping a place opens its page');
     await context.close();
+  }
+
+  // ---------- 3b. Golden Hour Places, and sharing ----------
+  {
+    const { page, context } = await withDenver();
+    await page.waitForSelector(CUR + '.hero .score');
+    await page.waitForSelector(CUR + '.ghplaces .srow');
+    const cards = page.locator(CUR + '.ghplaces .spotcard');
+    check(await cards.count() === 3, 'each location’s page ends with Golden Hour Places: landmarks, adventurous, dining');
+    const heads = (await cards.locator('.eyebrow > span:first-of-type').allInnerTexts()).map((h) => h.trim());
+    check(heads.join('|') === 'LANDMARKS|ADVENTUROUS|DINING WITH A VIEW', `in that order (${heads.join(', ')})`);
+    check(await cards.nth(0).locator('.srow').count() === 3, 'the top three of each');
+    const first = (await cards.nth(0).locator('.srow .n').first().innerText()).trim();
+    check(first === 'Sloan’s Lake Park' || first === 'Inspiration Point' || first === 'Sunset Park', `famous and sunset-named places rank first (${first})`);
+    check((await cards.nth(1).innerText()).includes('Lookout Mountain') && /effort/i.test(await cards.nth(1).innerText()), 'adventurous places say how much effort they take');
+    check((await cards.nth(2).innerText()).includes('May need a booking'), 'dining says it may need a booking');
+    await page.locator(CUR + '.ghplaces').scrollIntoViewIfNeeded();
+    await shot(page, 'phone-places-section');
+    await layout(page, 'place page with places (phone)');
+
+    await page.click(CUR + '[data-act="spots-all"]');
+    await page.waitForSelector('.screenhead h1');
+    check((await text(page, '.screenhead h1')) === 'Golden Hour Places', 'See all opens Golden Hour Places');
+    const parts = (await page.locator('.screen .spotcard .eyebrow > span:first-of-type').allInnerTexts()).map((h) => h.trim());
+    check(parts.join('|') === 'LANDMARKS|ADVENTUROUS|DINING WITH A VIEW|YOUR SPOTS', 'four parts: landmarks, adventurous, dining, your spots');
+    check(await page.locator('.screen .spotcard').first().locator('.srow').count() === 5, 'the top five of each');
+    await page.click('.screen [data-act="spots-more"]');
+    check(await page.locator('.screen .spotcard').first().locator('.srow').count() === 6, 'and the rest on Show more');
+    await shot(page, 'phone-golden-hour-places');
+    await layout(page, 'Golden Hour Places (phone)'); await contrast(page, 'Golden Hour Places');
+
+    check((await page.locator('.screen .spotcard').nth(2).locator('.srow .n').first().innerText()).trim() === 'Sky Bar', 'a rooftop with a view in its name ranks first for dining');
+    await page.locator('.screen .spotcard').nth(2).locator('.srow', { hasText: 'Linger' }).click();
+    await page.waitForSelector('.spothero h2');
+    check((await text(page, '.spothero h2')) === 'Linger', 'a place opens on its own screen');
+    check(await page.locator('a:has-text("Website")').count() === 1 && await page.locator('a:has-text("Call to book")').count() === 1, 'with its website and a way to book');
+    check(/here/i.test(await text(page, '.screen')), 'and tonight’s sunset there');
+    await shot(page, 'phone-spot');
+    await layout(page, 'a place (phone)'); await contrast(page, 'a place');
+    await page.locator('[data-act="share-spot"]').first().click();
+    await page.waitForFunction(() => navigator.clipboard.readText().then((t) => t.includes('#s=')));
+    const spotLink = await page.evaluate(() => navigator.clipboard.readText());
+    check(/^Linger: a great place to watch the sunset near Denver\./.test(spotLink) && G_decode(spotLink), 'sharing a place copies a message and a link to it');
+    await page.click('[data-act="spot-save"]');
+    await page.waitForFunction(() => document.querySelector('.screen').textContent.includes('In your spots'), null, { timeout: 5000 }).catch(() => {});
+    check((await text(page, '.screen')).includes('In your spots'), 'Save to your spots');
+    await page.click('[data-act="spot-plan"]');
+    await page.waitForSelector('.timeline');
+    check(await page.inputValue('#spotName') === 'Linger' && await page.inputValue('#spotType') === 'venue', 'Plan this evening here fills in the plan with the place');
+    await page.click('[data-act="close-view"]');
+
+    await page.waitForSelector(CUR + '[data-act="spots-all"]');
+    await page.click(CUR + '[data-act="spots-all"]');
+    check((await page.locator('.screen .spotcard').nth(3).innerText()).includes('Linger'), 'a saved place appears under Your spots');
+    await page.click('[data-act="spot-add"]');
+    await page.fill('#spotName', 'The bench'); await page.dispatchEvent('#spotName', 'change');
+    await page.fill('#coords', '39.7400, -105.0100'); await page.dispatchEvent('#coords', 'change');
+    await page.click('[data-act="spot-create"]');
+    check((await page.locator('.screen .spotcard').nth(3).innerText()).includes('The bench'), 'Add your own spot');
+    await page.click('[data-act="close-view"]');
+    await page.waitForSelector(CUR + '.ghplaces');
+    check((await page.locator(CUR + '.ghplaces .spotcard').count()) === 4, 'your spots join the foot of the page');
+
+    await page.click(CUR + '[data-act="share-today"]');
+    await page.waitForFunction(() => navigator.clipboard.readText().then((t) => t.startsWith('Tonight')), null, { timeout: 10000 });
+    const today = await page.evaluate(() => navigator.clipboard.readText());
+    const r0 = expectedDenver(0).rating;
+    check(today.startsWith(`Tonight's sunset in Denver: ${r0.score.toFixed(1)}/5, ${r0.colourClass.toLowerCase()} colour.`) && /#l=Denver~39\.7392~-104\.9903~America%2FDenver/.test(today), `one tap shares tonight’s sunset, with a link that opens it (${today.slice(0, 160)})`);
+    const card = await page.evaluate(async () => { const f = await window.__gh.card(); return f ? [f.type, f.size] : null; });
+    check(card && card[0] === 'image/png' && card[1] > 20000, 'and a picture of it, for apps that take one');
+    await context.close();
+
+    const opened = await open({ hash: '#l=Boulder~40.0150~-105.2705~America%2FDenver' });
+    await opened.page.waitForFunction(() => { const h = document.querySelector('.page[aria-current="true"] .hero h2'); return h && h.textContent.trim() === 'Boulder'; });
+    check(true, 'a shared location link adds that location and opens it');
+    await opened.context.close();
+    const spotOpen = await open({ hash: '#s=' + spotLink.split('#s=')[1] });
+    await spotOpen.page.waitForSelector('.spothero h2');
+    check((await text(spotOpen.page, '.spothero h2')) === 'Linger' && (await text(spotOpen.page, '.spothero')).includes('Shared with you'), 'a shared place link opens that place');
+    await spotOpen.context.close();
+
+    net.overpass = 'down';
+    const down = await open();
+    await addPlace(down.page, 'Bould');
+    await down.page.waitForSelector(CUR + '[data-act="spots-retry"]');
+    check((await text(down.page, CUR + '.ghplaces')).includes('Couldn’t load places near Boulder'), 'when places can’t load, it says so, with Try again');
+    net.overpass = 'ok';
+    await down.page.click(CUR + '[data-act="spots-retry"]');
+    await down.page.waitForSelector(CUR + '.ghplaces .srow');
+    check(true, 'Try again finds them');
+    await down.context.close();
   }
 
   // ---------- 4. The plan: pin, times, bring list, save, offline, share, calendar ----------

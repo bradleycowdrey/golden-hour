@@ -1,6 +1,6 @@
 # Golden Hour: plan and spec
 
-Version 13. An app by Bradley Cowdrey, in the same family as Two Degrees, Bearings and Meridian. Items marked **(verify)** come from memory or secondary sources
+Version 14. An app by Bradley Cowdrey, in the same family as Two Degrees, Bearings and Meridian. Items marked **(verify)** come from memory or secondary sources
 and must be checked against primary documentation before they are relied on.
 
 **How to read this.** Sections 1 to 3 and 12 to 15 are the plan: what it is, the order of work, how
@@ -593,6 +593,37 @@ replaces the earlier Tonight, Week and Plans tabs.)
 6. **Spots** (Release 2). A list and a map, reached from a place's page.
 
 From 900 px wide a place's page has two columns: the evening on the left, its details on the right.
+
+### 10.1a Golden Hour Places (owner redesign, version 0.8)
+
+The flow is: see what the evening brings, see where you could go, make a plan. So every location's page
+ends with **Golden Hour Places**: the top three of each kind, each row opening the place on its own
+screen, and "See all Golden Hour Places".
+
+- **Golden Hour Places** (the full screen) has four parts, each showing its top five with "Show more":
+  1. **Landmarks**: well-known spots that are easy to reach (viewpoints, piers, beaches, notable parks).
+  2. **Adventurous**: places that take effort (summits, high viewpoints), marked medium or high effort.
+  3. **Dining with a view**: bars, restaurants and cafés with a terrace, a rooftop or a view in their
+     name, marked "May need a booking".
+  4. **Your spots**: places the user has saved or added (name, kind, a pin), kept on the device.
+- **Ranking.** Open map data has no ratings or reviews, so "what most people agree on" is approximated
+  from what it does have: places with a Wikipedia or Wikidata entry and places named for the sunset first,
+  then the kind of place, a viewpoint that faces the sunset, a rooftop, then the nearest. The screen says
+  so. Effort is estimated from height above the location (over 250 m: medium; over 600 m: high).
+- **Source.** One Overpass query per location (`spotsQuery` in core.js), cached for 14 days, with two
+  public endpoints in turn. A sample location shows bundled sample places and asks nothing of the network.
+- **A place's screen**: its kind and effort; Plan this evening here (which fills in the plan with the
+  place, its kind and a walk-in time from its effort); Directions; a map; tonight's rating; what the map
+  data knows (elevation and height above town, opening hours, fees, dogs, step-free access); its website
+  and a call-to-book link where known; Share; and Save to your spots.
+- **Sharing.** A share button at the top of every location shares that evening's sunset in one tap: a
+  sentence, a link that opens the app on that location (`#l=name~lat~lon~tz`), and, where the phone
+  accepts files, a picture of the sky with the score and times (drawn ahead of the tap, because phones
+  only open the share sheet straight from a tap). Every place has a share button (`#s=` link that opens
+  that place). Locations and Golden Hour Places offer "Share Golden Hour".
+- The saved cities are now called **Locations**; "Golden Hour Places" means places to watch from.
+- **The evenings ahead** lists only the rated evenings, then one line: "[Day, date] and beyond: too
+  early to call".
 
 ### 10.2 The plan flow
 

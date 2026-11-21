@@ -535,6 +535,97 @@
     } catch { return null; }
   }
 
+  // ---------- Golden Hour Places: where to watch from, from open map data ----------
+  /** One Overpass query for the places around a location: well-known viewpoints, beaches, piers and parks near by;
+      peaks and notable viewpoints farther out; and bars and restaurants with a terrace, a rooftop or a view. */
+  function spotsQuery(lat, lon) {
+    const a = (r) => `around:${r},${lat.toFixed(4)},${lon.toFixed(4)}`, notable = '[~"^(wikidata|wikipedia)$"~"."]';
+    return `[out:json][timeout:25][maxsize:33554432];(` +
+      `nwr(${a(25000)})[tourism=viewpoint][name];nwr(${a(25000)})[man_made=pier][name];nwr(${a(25000)})[natural=beach][name];` +
+      `nwr(${a(25000)})[leisure=park][name]${notable};nwr(${a(25000)})[name~"sunset",i][~"^(tourism|leisure|natural|man_made)$"~"."];` +
+      `)->.easy;(nwr(${a(70000)})[natural=peak][name]${notable};nwr(${a(70000)})[tourism=viewpoint][name]${notable};nwr(${a(20000)})[natural=peak][name];)->.adv;(` +
+      `nwr(${a(15000)})[amenity~"^(bar|pub|restaurant|cafe|biergarten)$"][name][outdoor_seating~"^(yes|rooftop|roof|terrace|balcony)$"];` +
+      `nwr(${a(15000)})[amenity~"^(bar|pub|restaurant|cafe)$"][name][rooftop=yes];` +
+      `nwr(${a(15000)})[amenity~"^(bar|pub|restaurant|cafe)$"][name~"rooftop|roof|sky|sunset|view|terrace|deck|vista|summit|harbou?r|pier|beach|lookout",i];` +
+      `)->.food;.easy out center tags 150;.adv out center tags 150;.food out center tags 150;`;
+  }
+  const SPOT_CAT = { easy: 'Landmark', adventurous: 'Adventurous', dining: 'Dining' };
+  /** Sorts open map data into the three kinds of Golden Hour Places, best first. "Best" means what open data can
+      show: famous places (with a Wikipedia or Wikidata entry) and places named for the sunset first, then the kind
+      of place, then the nearest. o: {lat, lon, elevation (m, of the location), facing (sunset azimuth)} */
+  function rankSpots(elements, o) {
+    const seen = new Set(), out = { easy: [], adventurous: [], dining: [] };
+    for (const e of elements || []) {
+      const t = e.tags || {}, name = (t.name || '').trim(), lat = e.lat != null ? e.lat : e.center && e.center.lat, lon = e.lon != null ? e.lon : e.center && e.center.lon;
+      if (!name || lat == null || lon == null) continue;
+      const key = `${e.type}/${e.id}`, dedupe = `${name.toLowerCase()}|${lat.toFixed(2)}|${lon.toFixed(2)}`;
+      if (seen.has(key) || seen.has(dedupe)) continue;
+      seen.add(key); seen.add(dedupe);
+      const km = distance(o.lat, o.lon, lat, lon) / 1000, famous = !!(t.wikidata || t.wikipedia), sunsetNamed = /sunset/i.test(name) || /sunset/i.test(t.description || '');
+      const ele = t.ele != null && Number.isFinite(parseFloat(t.ele)) ? parseFloat(t.ele) : null;
+      const gain = ele != null && o.elevation != null ? ele - o.elevation : null;
+      let cat, effort, score = (famous ? 40 : 0) + (sunsetNamed ? 30 : 0), kind;
+      if (t.amenity) {
+        cat = 'dining'; effort = 'low';
+        kind = { bar: 'Bar', pub: 'Pub', restaurant: 'Restaurant', cafe: 'Café', biergarten: 'Beer garden' }[t.amenity] || 'Bar';
+        if (t.rooftop === 'yes' || /^(rooftop|roof)$/.test(t.outdoor_seating || '')) score += 22;
+        if (/rooftop|roof|sky|view|vista|lookout|terrace|deck/i.test(name)) score += 12;
+        if (/^(terrace|balcony)$/.test(t.outdoor_seating || '')) score += 8;
+        if (t.website || t['contact:website']) score += 6;
+        if (t.opening_hours) score += 3;
+        score -= km * 1.2;
+      } else if (t.natural === 'peak' || (gain != null && gain > 250)) {
+        cat = 'adventurous';
+        effort = t.natural === 'peak' ? (gain == null || gain > 600 ? 'high' : 'medium') : gain > 600 ? 'high' : 'medium';
+        kind = t.natural === 'peak' ? 'Summit' : 'Viewpoint';
+        if (t.tourism === 'viewpoint' || t.natural === 'peak') score += 10;
+        score -= km * 0.35;
+      } else {
+        cat = 'easy'; effort = 'easy';
+        kind = t.tourism === 'viewpoint' ? 'Viewpoint' : t.man_made === 'pier' ? 'Pier' : t.natural === 'beach' ? 'Beach' : t.leisure === 'park' ? 'Park' : 'Landmark';
+        score += { Viewpoint: 16, Pier: 13, Beach: 13, Park: 5, Landmark: 8 }[kind];
+        if (t.tourism === 'attraction') score += 8;
+        score -= km * 0.9;
+      }
+      // A viewpoint that says which way it looks: better when that is toward the sunset.
+      let faces = null;
+      if (t.direction != null && o.facing != null) {
+        const d = parseFloat(t.direction);
+        if (Number.isFinite(d)) { faces = Math.abs(normalize(d - o.facing + 180) - 180) <= 60; score += faces ? 12 : -10; }
+      }
+      const website = t.website || t['contact:website'] || null, phone = t.phone || t['contact:phone'] || null;
+      out[cat].push({ id: key, name, cat, kind, effort, km, travel: travelMinutes(km), score: Math.round(score * 10) / 10, lat, lon, famous, sunsetNamed, faces,
+        ele, gain: gain == null ? null : Math.round(gain), website: website && /^https?:\/\//.test(website) ? website : null, phone, hours: t.opening_hours || null,
+        wheelchair: t.wheelchair || null, fee: t.fee || null, dog: t.dog || null });
+    }
+    for (const k of Object.keys(out)) out[k].sort((a, b) => b.score - a.score || a.km - b.km);
+    return out;
+  }
+  /** Why a place ranks where it does, in a few words. */
+  function spotReason(s) {
+    const bits = [];
+    if (s.famous) bits.push('Well known');
+    if (s.sunsetNamed) bits.push('Named for the sunset');
+    if (s.faces === true) bits.push('Faces the sunset');
+    if (s.cat === 'dining') bits.push('Terrace or rooftop');
+    if (!bits.length) bits.push(s.cat === 'adventurous' ? 'High ground' : 'Open view');
+    return bits.join(' · ');
+  }
+  /** A spot in a share link: base64url of compact JSON. */
+  function encodeSpot(s) {
+    const body = { v: 1, n: cut(s.name, 60), la: Math.round(s.lat * 1e5) / 1e5, lo: Math.round(s.lon * 1e5) / 1e5, c: s.cat, k: cut(s.kind || '', 20), e: s.effort || '' };
+    return toBase64Url(new TextEncoder().encode(JSON.stringify(body)));
+  }
+  function decodeSpot(text) {
+    try {
+      const o = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(fromBase64Url(text)));
+      const num = (v) => typeof v === 'number' && Number.isFinite(v);
+      if (!o || o.v !== 1 || typeof o.n !== 'string' || !num(o.la) || !num(o.lo) || Math.abs(o.la) > 90 || Math.abs(o.lo) > 180) return null;
+      return { name: cut(o.n, 60), lat: o.la, lon: o.lo, cat: ['easy', 'adventurous', 'dining', 'own'].includes(o.c) ? o.c : 'own', kind: cut(o.k || '', 20),
+        effort: ['easy', 'medium', 'high', 'low', ''].includes(o.e) ? o.e : '' };
+    } catch { return null; }
+  }
+
   // ---------- The calendar file (section 8.2) ----------
   const icsText = (s) => String(s).replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
   const icsTime = (ms) => new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
@@ -596,7 +687,7 @@
     WEIGHTS, COLOUR_CLASSES, colourClass, feltWind, parts, capReason, tierOf, verdictOf, rate, reason,
     tempText, windText, distanceText, prefersImperial, cToF,
     travelMinutes, bufferMinutes, planTimes, bringList, mergeItems, moonAt, moonEvening, moonDistance, nextPhase, SYNODIC,
-    toBase64Url, fromBase64Url, encodePlan, decodePlan, MAX_LINK, ics, fold, sampleForecast,
+    toBase64Url, fromBase64Url, encodePlan, decodePlan, spotsQuery, rankSpots, spotReason, encodeSpot, decodeSpot, SPOT_CAT, MAX_LINK, ics, fold, sampleForecast,
   };
   if (typeof module === 'object' && module.exports) module.exports = api; else root.GH = api;
 })(typeof self !== 'undefined' ? self : this);

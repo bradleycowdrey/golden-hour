@@ -463,3 +463,52 @@ svg.horizon text { font: 500 14px var(--font); fill: rgba(255,255,255,.8); color
 .moonpath.setting u { left: 76%; }
 .moonlightbar { background: linear-gradient(90deg, #2C2C3A, #6E6A8E 45%, #F1E6C8); }
 .distbar { background: linear-gradient(90deg, #EFE3C4, #8E95A8); }
+
+/* ============ Golden Hour Places ============ */
+.ghplaces { display: flex; flex-direction: column; gap: 10px; margin-top: 18px; }
+.sechead { padding: 0 4px; text-shadow: 0 1px 8px rgba(0,0,0,.35); }
+.sechead h3 { margin: 0; font-size: 26px; font-weight: 500; letter-spacing: -.02em; }
+.sechead p { margin: 2px 0 4px; font-size: 15px; color: var(--t85); }
+.spotcard .eyebrow { margin-bottom: 4px; }
+.catsub { margin: 0 0 6px; font-size: 13px; color: var(--t70); }
+.srow { display: grid; grid-template-columns: 44px minmax(0, 1fr) 20px; align-items: center; gap: 12px; width: 100%; min-height: 64px; padding: 8px 0; border: 0;
+  border-top: .5px solid var(--hair); background: none; color: inherit; text-align: left; }
+.spotcard .eyebrow + .srow, .catsub + .srow { border-top: 0; }
+@media (hover: hover) { .srow:hover .n { opacity: .82; } }
+.srow .sl { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
+.srow .n { font-size: 17px; font-weight: 500; line-height: 1.25; overflow-wrap: anywhere; }
+.srow .r { font-size: 13px; color: var(--t70); }
+.srow .e { font-size: 13px; font-weight: 600; }
+.e-easy, .e-low { color: #A8E0B4; } .e-medium { color: #FFD08A; } .e-high { color: #FFB4A0; } .e-own { color: #F5C6D6; }
+.srow .chev svg { width: 18px; height: 18px; color: var(--t70); }
+.sbadge { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 13px; color: #fff; box-shadow: inset 0 0 0 .5px rgba(255,255,255,.25); }
+.sbadge svg { width: 22px; height: 22px; }
+.sbadge b { font-size: 18px; font-weight: 600; }
+.sbadge.c-easy { background: linear-gradient(160deg, #F7B267, #E0626F); }
+.sbadge.c-adventurous { background: linear-gradient(160deg, #6FB28A, #2F6E78); }
+.sbadge.c-dining { background: linear-gradient(160deg, #B98BE8, #6B4BB8); }
+.sbadge.c-own { background: linear-gradient(160deg, #F29BB8, #C2477A); }
+.sbadge.big { width: 64px; height: 64px; border-radius: 18px; margin: 0 auto 10px; }
+.sbadge.big svg { width: 32px; height: 32px; }
+.more { display: block; width: 100%; min-height: 44px; margin-top: 4px; border: 0; border-top: .5px solid var(--hair); background: none; color: #FFD08A; font-size: 15px; font-weight: 600; }
+.screenhead { padding: 6px 4px 4px; text-shadow: 0 1px 8px rgba(0,0,0,.35); }
+.screenhead h1 { margin: 0; font-size: 32px; font-weight: 500; letter-spacing: -.02em; }
+.screenhead p { margin: 2px 0 0; font-size: 15px; color: var(--t85); }
+.credit { padding: 6px 4px; color: var(--t85); text-shadow: 0 1px 6px rgba(0,0,0,.4); }
+.spothero { padding-top: 8px; }
+.row.center { justify-content: center; }
+.tonight { display: flex; align-items: center; gap: 14px; margin-bottom: 6px; }
+.tonight .big { font-size: 48px; font-weight: 200; line-height: 1; letter-spacing: -.02em; }
+.tonight .tl2 { display: flex; flex-direction: column; gap: 2px; }
+.tonight .tl2 b { font-size: 17px; font-weight: 600; }
+.tonight .v { display: inline-flex; align-items: center; gap: 6px; font-size: 15px; font-weight: 600; }
+.btn svg { width: 18px; height: 18px; }
+/* Share: a round button at the top of each location, beside its name. */
+.hero { position: relative; }
+.heroshare { position: absolute; top: 18px; right: 0; width: 44px; height: 44px; border: 0; border-radius: 50%; background: rgba(0,0,0,.28); color: #fff; display: grid; place-items: center; }
+.heroshare svg { width: 20px; height: 20px; }
+.circle { width: 44px; height: 44px; border: 0; border-radius: 50%; background: rgba(0,0,0,.28); color: #fff; display: grid; place-items: center; }
+.circle svg { width: 20px; height: 20px; }
+.day.later { grid-template-columns: 1fr; min-height: 44px; }
+.day.later .why { grid-column: 1; font-size: 15px; color: var(--t85); }
+.sharecard b { font-size: 17px; font-weight: 600; }
