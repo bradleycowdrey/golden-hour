@@ -13,7 +13,7 @@ leave, what to bring, and when to head home. It is in the same family as
 [Two Degrees](https://github.com/bradleycowdrey/two-degrees) and
 [Bearings](https://github.com/bradleycowdrey/bearings), and shows imperial and metric side by side.
 
-This is **Release 1** of the plan in [docs/SPEC.md](docs/SPEC.md). Version 0.2.0.
+This is **Release 1** of the plan in [docs/SPEC.md](docs/SPEC.md). Version 0.4.0.
 
 ## What it does
 
@@ -22,6 +22,10 @@ This is **Release 1** of the plan in [docs/SPEC.md](docs/SPEC.md). Version 0.2.0
   It reads cloud at three heights here and up to 300 km toward the sunset, haze, wind and how the
   temperature compares with what is usual for the place. Each evening also has a verdict (Go, Maybe,
   Skip), a range and one plain sentence of why. Tap to see the four parts behind the score.
+- **A page for each place, swiped between**, as in Two Degrees on the iPhone: each on its own evening's
+  sky, with a dot for each place and a list of them all.
+- **A tile for every input to the score**, as in Two Degrees: colour, cloud cover, cloud toward the sunset,
+  air clarity, wind, feels like, rain, humidity, the sunset's time and direction, and the moon.
 - **The evening's times**: golden hour, the best window, sunset, the afterglow and last light.
 - **The week**: six rated evenings, the best one marked, and four more with their sunset times. Days three
   to five are an outlook; beyond that it says "Too early to call".
