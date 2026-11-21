@@ -4,7 +4,7 @@
 (function () {
   'use strict';
   const G = window.GH;
-  const VERSION = '0.9.0';
+  const VERSION = '0.9.1';
   const MIN = 60000, HOUR = 3600000, DAY = 86400000;
   const $ = (sel, el) => (el || document).querySelector(sel);
   const $$ = (sel, el) => Array.from((el || document).querySelectorAll(sel));
@@ -1063,8 +1063,21 @@
   const KIND_ICON = { Viewpoint: 'viewpoint', Pier: 'pier', Beach: 'beach', Park: 'park', Garden: 'garden', Lake: 'lake', Lighthouse: 'lighthouse', 'Lookout tower': 'tower',
     Cliff: 'cliff', Harbour: 'harbour', Landmark: 'landmark', Summit: 'summit', Restaurant: 'restaurant', Bar: 'bar', Pub: 'pub', 'Café': 'cafe', 'Beer garden': 'beergarden',
     'Open ground': 'park', Waterside: 'lake', 'Summit or viewpoint': 'summit', 'Restaurant or bar': 'restaurant' };
+  /** A viewpoint is drawn as what you'd look out on there, read from its name: the coast, a peak, the city. */
+  const VIEW_OF = [[/light ?house|\bphare\b|\bfaro\b/, 'lighthouse'], [/\b(pier|jetty|wharf|boardwalk|mole)\b/, 'pier'], [/\b(bridge|viaduct|pont|puente|brücke)\b/, 'bridge'],
+    [/\b(harbou?r|marina|port|docks?|quay)\b/, 'harbour'], [/\b(beach|shore|sands?|strand|playa|plage|praia|cove)\b/, 'beach'],
+    [/\b(cliffs?|bluffs?|head|headland|cape|point|ocean|sea|coast|bay|gulf)\b/, 'cliff'], [/\b(lake|loch|lago|lac|reservoir|pond|river|creek|falls|lagoon)\b/, 'lake'],
+    [/\b(mount|mt\.?|mountain|peak|summit|ridge|butte|mesa|pass|canyon|monte|pico|berg|crest|knob|rock|rocks)\b/, 'summit'],
+    [/\b(tower|torre|tour|turm)\b/, 'tower'], [/\b(roof|rooftop|terrace|sky ?deck|observatory|observation|skyline|city|downtown|plaza)\b/, 'skyline'],
+    [/\b(garden|gardens|jardin|jardim)\b/, 'garden'], [/\b(park|meadows?|green|commons?)\b/, 'park']];
+  function viewpointIcon(s) {
+    const n = String(s.name || '').toLowerCase();
+    for (const [re, k] of VIEW_OF) if (re.test(n)) return k === 'cliff' && /\bpoint\b/.test(n) && !/\b(ocean|sea|coast|bay|cape|cliffs?|head)\b/.test(n) ? 'viewpoint' : k;
+    return s.gain >= 300 ? 'summit' : 'viewpoint';
+  }
   function kindIconName(s) {
     if (s.cat === 'dining' && s.rooftop && s.kind !== 'Café') return 'rooftop';
+    if (s.kind === 'Viewpoint') return viewpointIcon(s);
     return KIND_ICON[s.kind] || (s.type && { outdoor: 'park', water: 'lake', peak: 'summit', venue: 'restaurant' }[s.type]) || 'pin';
   }
   const kindIcon = (s) => `<svg viewBox="0 0 40 40" aria-hidden="true"><use href="#k-${kindIconName(s)}"/></svg>`;
