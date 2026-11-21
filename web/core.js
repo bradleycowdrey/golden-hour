@@ -422,6 +422,61 @@
     return { up: moonPosition(ms, lat, lon).altitude > 0, fraction: ph.fraction, name: ph.name };
   }
 
+  // ---------- The moon this evening ----------
+  const SYNODIC = 29.530588853;   // days from one new moon to the next
+  /** The moon's distance from the earth's centre, km. */
+  function moonDistance(ms) { return moonCoords(toDays(ms)).dist; }
+  /** When the moon's phase next reaches `target` (0 new, 0.25 first quarter, 0.5 full, 0.75 last quarter) after `ms`. */
+  function nextPhase(ms, target) {
+    const off = (t) => { let d = moonPhase(t).phase - target; d -= Math.round(d); return d; };   // -0.5..0.5, rising through 0
+    let a = ms, fa = off(a);
+    for (let i = 0; i < 130; i++) {
+      const b = a + 6 * HOUR, fb = off(b);
+      if (fa < 0 && fb >= 0 && fb - fa < 0.5) {
+        let lo = a, hi = b;
+        for (let k = 0; k < 30; k++) { const mid = (lo + hi) / 2; if (off(mid) < 0) lo = mid; else hi = mid; }
+        return Math.round((lo + hi) / 2);
+      }
+      a = b; fa = fb;
+    }
+    return null;
+  }
+  /** Everything about the moon for the evening around `sunset`: its phase, when it rises and sets nearest the
+      evening and in which direction, where it is when the sun goes down, how much light it gives for the walk
+      back, how far away it is, and when it is next full and new. */
+  function moonEvening(sunset, lat, lon, headBack) {
+    // Every moonrise and moonset from a day before sunset to a day and a half after, each refined to the minute.
+    const STEP = 5 * MIN, from = sunset - 24 * HOUR, to = sunset + 36 * HOUR, rises = [], sets = [];
+    let prevAlt = moonPosition(from, lat, lon).altitude;
+    for (let t = from + STEP; t <= to; t += STEP) {
+      const alt = moonPosition(t, lat, lon).altitude;
+      if ((prevAlt < 0) !== (alt < 0)) {
+        let lo = t - STEP, hi = t;
+        for (let k = 0; k < 10; k++) { const mid = (lo + hi) / 2; if ((moonPosition(mid, lat, lon).altitude >= 0) === (alt >= 0)) hi = mid; else lo = mid; }
+        const at = Math.round(hi / MIN) * MIN, ev = { time: at, azimuth: moonPosition(at, lat, lon).azimuth };
+        (alt >= 0 ? rises : sets).push(ev);
+      }
+      prevAlt = alt;
+    }
+    const upNow = moonPosition(sunset, lat, lon).altitude > 0;
+    // The rise that matters: if the moon is already up at sunset, the one that brought it up; otherwise the next.
+    const rise = upNow ? rises.filter((e) => e.time <= sunset).pop() || null : rises.find((e) => e.time > sunset) || null;
+    // The set that matters: the next one after sunset.
+    const set = sets.find((e) => e.time > sunset) || null;
+    const ph = moonPhase(sunset), atSunset = moonPosition(sunset, lat, lon), sun = sunPosition(sunset, lat, lon);
+    const back = headBack == null ? sunset + 90 * MIN : headBack, atBack = moonPosition(back, lat, lon), phBack = moonPhase(back);
+    // Moonlight for the walk back: how much of the moon is lit, and how high it is (none when it is down).
+    const light = atBack.altitude > 0 ? phBack.fraction * Math.min(1, Math.sin(atBack.altitude * RAD) / Math.sin(40 * RAD)) : 0;
+    const dist = moonDistance(sunset);
+    return {
+      phase: ph.phase, fraction: ph.fraction, name: ph.name, age: ph.phase * SYNODIC, waxing: ph.phase < 0.5,
+      rise, set, upAtSunset: atSunset.altitude > 0, altitude: atSunset.altitude, azimuth: atSunset.azimuth, sunAzimuth: sun.azimuth,
+      upAtHeadBack: atBack.altitude > 0, altitudeAtHeadBack: atBack.altitude, light,
+      distance: dist, supermoon: dist < 362000 && ph.fraction > 0.9,
+      nextFull: nextPhase(sunset, 0.5), nextNew: nextPhase(sunset, 0),
+    };
+  }
+
   // ---------- The share link (section 8.1) ----------
   const B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
   function toBase64Url(bytes) {
@@ -540,7 +595,7 @@
     solarNoonGuess, eveningTimes, bracket, interp, larger, both, inputsAt, normals, dayOfYear, eveningNormal,
     WEIGHTS, COLOUR_CLASSES, colourClass, feltWind, parts, capReason, tierOf, verdictOf, rate, reason,
     tempText, windText, distanceText, prefersImperial, cToF,
-    travelMinutes, bufferMinutes, planTimes, bringList, mergeItems, moonAt,
+    travelMinutes, bufferMinutes, planTimes, bringList, mergeItems, moonAt, moonEvening, moonDistance, nextPhase, SYNODIC,
     toBase64Url, fromBase64Url, encodePlan, decodePlan, MAX_LINK, ics, fold, sampleForecast,
   };
   if (typeof module === 'object' && module.exports) module.exports = api; else root.GH = api;

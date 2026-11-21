@@ -1,6 +1,6 @@
 # Golden Hour: plan and spec
 
-Version 12. An app by Bradley Cowdrey, in the same family as Two Degrees, Bearings and Meridian. Items marked **(verify)** come from memory or secondary sources
+Version 13. An app by Bradley Cowdrey, in the same family as Two Degrees, Bearings and Meridian. Items marked **(verify)** come from memory or secondary sources
 and must be checked against primary documentation before they are relied on.
 
 **How to read this.** Sections 1 to 3 and 12 to 15 are the plan: what it is, the order of work, how
@@ -571,7 +571,15 @@ replaces the earlier Tonight, Week and Plans tabs.)
      as three bars) and Toward the sunset (a column of cloud at each of four distances, from you to
      the sun). The rest sit two across (three, then four, where there is room): Air clarity,
      Visibility, Wind (a compass), Feels like (against the usual), Rain, Humidity, Sunset (the
-     sun's path and where it meets the horizon) and Moon (drawn as it is lit).
+     sun's path and where it meets the horizon).
+   - **The moon's tiles**, after the sunset's: Moon (wide: the phase drawn large, how much is lit,
+     the day of the lunar month, the month as eight moons with tonight's ringed, and when it is next
+     full and new); At sunset (wide: the whole horizon, north round to north, with the sun where it
+     goes down and the moon where it is, and a note to turn around when a full moon is rising
+     opposite the sunset); Moonrise and Moonset (time, compass direction, and how they fall against
+     sunset); Moonlight (how much light it gives for the walk back); and Distance (near or far
+     this month, and supermoons). The rise shown is the one that brought the moon up if it is up at
+     sunset, otherwise the next; the set shown is the next after sunset.
 2. **The bottom bar.** Plans on the left, a dot for each place in the middle (an arrow for the
    current location; a count such as "3 of 12" beyond seven places), and Places on the right.
 3. **Places.** The list of places, each a card with a swatch of its sky, tonight's score, colour

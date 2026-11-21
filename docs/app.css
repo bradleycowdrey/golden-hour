@@ -443,3 +443,23 @@ table.cmp td button svg { width: 20px; height: 20px; }
 /* The sun: low, soft-edged, the same size whatever the screen's shape. */
 .sky .sun { position: absolute; left: 50%; bottom: 2%; width: 34vmin; height: 34vmin; margin-left: -17vmin; border-radius: 50%;
   background: radial-gradient(closest-side, #FFFBEC 0, #FFF1C6 40%, rgba(255,226,150,.8) 50%, rgba(255,205,120,0) 100%); }
+
+/* ============ The moon's tiles ============ */
+.a-moonph { --acc: #EFE3C4; } .a-moonsky { --acc: #C9B8F0; } .a-moonrise { --acc: #E2D5B0; } .a-moonset { --acc: #B9C4E8; }
+.a-moonlight { --acc: #DCD3F2; } .a-moondist { --acc: #C7CEDB; }
+svg.moon.lg { width: 92px; height: 92px; }
+svg.moon.sm { width: 26px; height: 26px; }
+.moonbig { display: flex; justify-content: center; padding: 2px 0 12px; }
+.moonbig svg { filter: drop-shadow(0 0 14px rgba(255,244,214,.28)); }
+.phases { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); justify-items: center; align-items: center; }
+.phases span { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; }
+.phases span.on { box-shadow: 0 0 0 2px var(--acc); background: rgba(255,255,255,.08); }
+.scale.four { grid-template-columns: repeat(4, 1fr); }
+.scale.four span:nth-child(2) { text-align: left; padding-left: 4%; } .scale.four span:nth-child(3) { text-align: center; } .scale.four span:last-child { text-align: right; }
+.scale.two { grid-template-columns: 1fr 1fr; }
+svg.horizon { display: block; width: 100%; height: auto; overflow: visible; }
+svg.horizon text { font: 500 14px var(--font); fill: rgba(255,255,255,.8); color: rgba(255,255,255,.8); }
+.moonpath u { left: 24%; background: #F1E6C8; }
+.moonpath.setting u { left: 76%; }
+.moonlightbar { background: linear-gradient(90deg, #2C2C3A, #6E6A8E 45%, #F1E6C8); }
+.distbar { background: linear-gradient(90deg, #EFE3C4, #8E95A8); }

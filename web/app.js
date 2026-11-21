@@ -560,6 +560,8 @@
     damp: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3s6 6.500 6 11a6 6 0 0 1-12 0c0-4.500 6-11 6-11z" fill="none" stroke="currentColor" stroke-width="2"/></svg>',
     sun: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 18h18M6.500 18a5.500 5.500 0 0 1 11 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M12 6v3.500M9.500 7.500 12 10l2.500-2.500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     moon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.500A8 8 0 0 1 9.500 4a8 8 0 1 0 10.500 10.500z" fill="currentColor"/></svg>',
+    moonrise: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 19h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M16.500 15.500A5 5 0 0 1 10 9a5 5 0 1 0 6.500 6.500z" fill="currentColor"/><path d="M18.500 4v5M16.300 6.200 18.500 4l2.200 2.200" fill="none" stroke="currentColor" stroke-width="1.800" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    moonset: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 19h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M16.500 15.500A5 5 0 0 1 10 9a5 5 0 1 0 6.500 6.500z" fill="currentColor"/><path d="M18.500 4v5M16.300 6.800 18.500 9l2.200-2.200" fill="none" stroke="currentColor" stroke-width="1.800" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   };
   const POINTS = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
   const pointOf = (deg) => POINTS[Math.round(G.normalize(deg) / 22.5) % 16];
@@ -585,11 +587,75 @@
   /** The sun's path over the day, the horizon, and the moment it sets. */
   const sunPathSvg = () => `<div class="sunpath" aria-hidden="true"><svg viewBox="0 0 100 34" preserveAspectRatio="none"><path d="M0 22H100" stroke="rgba(255,255,255,.3)" stroke-width="1" vector-effect="non-scaling-stroke" fill="none"/><path d="M0 31C22 31 30 5 50 5S78 31 100 31" stroke="var(--acc)" stroke-width="1.600" vector-effect="non-scaling-stroke" fill="none" opacity=".85"/></svg><u></u></div>`;
   /** The moon as it is lit: phase 0 new, 0.25 first quarter, 0.5 full, 0.75 last quarter. */
-  function moonSvg(phase) {
-    const r = 15, k = Math.cos(phase * 2 * Math.PI), waxing = phase < 0.5, rx = Math.abs(k) * r;
-    const lit = `M18 3 A${r} ${r} 0 0 ${waxing ? 1 : 0} 18 33 A${rx.toFixed(2)} ${r} 0 0 ${(k > 0) === waxing ? 0 : 1} 18 3z`;
-    return `<svg class="moon" viewBox="0 0 36 36" aria-hidden="true"><circle cx="18" cy="18" r="${r}" fill="rgba(255,255,255,.14)"/><path d="${lit}" fill="#E9DCC8"/></svg>`;
+  function moonSvg(phase, size) {
+    const r = 15, k = Math.cos(phase * 2 * Math.PI), waxing = phase < 0.5, rx = Math.abs(k) * r, id = uid();
+    // The lit part: half a disc on the sunward side, plus or minus half an ellipse at the terminator.
+    const lit = phase < 0.02 || phase > 0.98 ? '' : `M18 3 A${r} ${r} 0 0 ${waxing ? 1 : 0} 18 33 A${rx.toFixed(2)} ${r} 0 0 ${(k > 0) === waxing ? 0 : 1} 18 3z`;
+    return `<svg class="moon${size ? ' ' + size : ''}" viewBox="0 0 36 36" aria-hidden="true"><defs><radialGradient id="${id}" cx=".42" cy=".38" r=".7"><stop offset="0" stop-color="#FFFBEE"/><stop offset=".7" stop-color="#EFE3C4"/><stop offset="1" stop-color="#D9CBA6"/></radialGradient></defs>
+      <circle cx="18" cy="18" r="${r}" fill="#3A3A46"/><circle cx="18" cy="18" r="${r}" fill="none" stroke="rgba(255,255,255,.18)" stroke-width=".8"/>${lit ? `<path d="${lit}" fill="url(#${id})"/>` : ''}
+      ${lit ? '<g fill="#000" opacity=".07"><circle cx="13" cy="13" r="3"/><circle cx="21" cy="21" r="2.2"/><circle cx="23.500" cy="12" r="1.600"/><circle cx="14" cy="23.500" r="1.400"/></g>' : ''}</svg>`;
   }
+  // ---------- The moon this evening: its own tiles ----------
+  /** The lunar month as eight moons, new to new, with this evening's ringed. */
+  function phaseStrip(phase) {
+    const at = Math.round(phase * 8) % 8;
+    return `<div class="phases">${[0, 1, 2, 3, 4, 5, 6, 7].map((i) => `<span class="${i === at ? 'on' : ''}">${moonSvg(i / 8, 'sm')}</span>`).join('')}</div>
+      <div class="scale four"><span>New</span><span>First quarter</span><span>Full</span><span>Last quarter</span></div>`;
+  }
+  /** The moon's arc over the sky, and where it meets the horizon: rising on the left, setting on the right. */
+  const moonPathSvg = (setting) => `<div class="sunpath moonpath${setting ? ' setting' : ''}" aria-hidden="true"><svg viewBox="0 0 100 34" preserveAspectRatio="none"><path d="M0 22H100" stroke="rgba(255,255,255,.3)" stroke-width="1" vector-effect="non-scaling-stroke" fill="none"/><path d="M0 31C22 31 30 5 50 5S78 31 100 31" stroke="var(--acc)" stroke-width="1.600" vector-effect="non-scaling-stroke" fill="none" opacity=".85" stroke-dasharray="${setting ? '0' : '3 3'}"/></svg><u></u></div>`;
+  /** The whole horizon, north round to north: the sun where it goes down, the moon where it is
+      (above the line when it is up, a dashed outline below when it is not), and the compass points. */
+  function horizonSvg(m) {
+    const xOf = (az) => (G.normalize(az) / 360) * 340 + 10;   // the whole horizon, north to north
+    const H = 66, alt = Math.max(-18, Math.min(60, m.altitude)), my = H - alt * (52 / 60);
+    const marks = [['N', 0], ['E', 90], ['S', 180], ['W', 270], ['N', 359.99]].map(([l, a]) => `<text x="${xOf(a).toFixed(1)}" y="${H + 18}" text-anchor="middle">${l}</text><line x1="${xOf(a).toFixed(1)}" y1="${H - 3}" x2="${xOf(a).toFixed(1)}" y2="${H + 3}" stroke="rgba(255,255,255,.5)" stroke-width="1.200"/>`).join('');
+    const moon = m.altitude >= 0 ? `<circle cx="${xOf(m.azimuth).toFixed(1)}" cy="${my.toFixed(1)}" r="8" fill="#F1E6C8"/><circle cx="${xOf(m.azimuth).toFixed(1)}" cy="${my.toFixed(1)}" r="14" fill="#F1E6C8" opacity=".14"/>`
+      : `<circle cx="${xOf(m.azimuth).toFixed(1)}" cy="${Math.min(H + 12, my).toFixed(1)}" r="7" fill="none" stroke="#F1E6C8" stroke-width="1.300" stroke-dasharray="2.500 2.500" opacity=".8"/>`;
+    return `<svg class="horizon" viewBox="0 0 360 ${H + 26}" aria-hidden="true"><defs><linearGradient id="hz" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFB45A" stop-opacity="0"/><stop offset="1" stop-color="#FFB45A" stop-opacity=".35"/></linearGradient></defs>
+      <rect x="${(xOf(m.sunAzimuth) - 60).toFixed(1)}" y="${H - 30}" width="120" height="30" fill="url(#hz)"/><path d="M${(xOf(m.sunAzimuth) - 11).toFixed(1)} ${H}a11 11 0 0 1 22 0z" fill="#FFB347"/>
+      <line x1="10" y1="${H}" x2="350" y2="${H}" stroke="rgba(255,255,255,.55)" stroke-width="1.400"/>${marks}${moon}</svg>`;
+  }
+  /** The moon tiles for an evening. */
+  function moonTiles(t, p, headBack) {
+    const m = G.moonEvening(t.sunset, p.lat, p.lon, headBack), imp = settings.imperialFirst, out = [];
+    const tm = (ms) => esc(timeText(ms, p.tz)), day = (ms) => esc(new Intl.DateTimeFormat(navigator.language || 'en-US', { timeZone: tzOr(p.tz), weekday: 'short', month: 'short', day: 'numeric' }).format(ms));
+    const both = (text) => { const [a, b] = text.split(' · '); return `${esc(a)}<span class="u2">${esc(b)}</span>`; };
+    const opposite = Math.abs(G.normalize(m.azimuth - m.sunAzimuth + 180) - 180) > 120;
+    const nextFullFirst = m.nextFull != null && (m.nextNew == null || m.nextFull < m.nextNew);
+    // The phase, and where this evening sits in the month.
+    out.push(tile('moonph', TI.moon, 'Moon', esc(m.name), `${Math.round(m.fraction * 100)}% lit · day ${Math.round(m.age)} of ${Math.round(G.SYNODIC)}`, `<div class="moonbig">${moonSvg(m.phase, 'lg')}</div>${phaseStrip(m.phase)}`,
+      `${m.waxing ? 'Growing' : 'Shrinking'} each night. ${nextFullFirst ? `Full on ${day(m.nextFull)}` : `New on ${day(m.nextNew)}`}, then ${nextFullFirst ? `new on ${day(m.nextNew)}` : `full on ${day(m.nextFull)}`}.`,
+      { wide: true, words: true, aside: m.supermoon ? 'Supermoon' : '' }));
+    // In the sky at sunset: the horizon you are facing, with the sun and the moon on it.
+    const where = m.upAtSunset ? `${Math.round(m.altitude)}° up in the ${compass(m.azimuth)}` : `Below the horizon, ${compass(m.azimuth)}`;
+    out.push(tile('moonsky', TI.moon, 'At sunset', esc(m.upAtSunset ? 'In the sky' : 'Not up yet'), esc(where), horizonSvg(m),
+      m.upAtSunset && opposite && m.fraction > 0.8 ? 'Opposite the sun: turn around as it sets to watch the moon glow.' : m.upAtSunset ? 'Look for it as the colour fades.' : m.rise && m.rise.time > t.sunset ? `It rises at ${tm(m.rise.time)}.` : 'Not in the sky this evening.',
+      { wide: true, words: true }));
+    // Moonrise and moonset nearest the evening.
+    if (m.rise) {
+      const gap = Math.round((m.rise.time - t.sunset) / MIN), rel = Math.abs(gap) < 2 ? 'with the sunset' : `${Math.abs(gap) >= 90 ? `${Math.round(Math.abs(gap) / 6) / 10} h` : `${Math.abs(gap)} min`} ${gap < 0 ? 'before' : 'after'} sunset`;
+      out.push(tile('moonrise', TI.moonrise, 'Moonrise', tm(m.rise.time), `${pointOf(m.rise.azimuth)} · ${Math.round(m.rise.azimuth)}°`, moonPathSvg(false),
+        Math.abs(gap) <= 60 && m.fraction > 0.8 ? `${rel[0].toUpperCase() + rel.slice(1)}, low and golden in the ${compass(m.rise.azimuth)}.` : `${rel[0].toUpperCase() + rel.slice(1)}.`));
+    } else out.push(tile('moonrise', TI.moonrise, 'Moonrise', 'None', 'within a day and a half', moonPathSvg(false), 'It stays up, or stays down, all evening.', { words: true }));
+    if (m.set) {
+      const gap = Math.round((m.set.time - t.sunset) / MIN);
+      out.push(tile('moonset', TI.moonset, 'Moonset', tm(m.set.time), `${pointOf(m.set.azimuth)} · ${Math.round(m.set.azimuth)}°`, moonPathSvg(true),
+        gap < 4 * 60 ? 'Goes down during the evening.' : gap < 12 * 60 ? 'Up for most of the night.' : 'Sets the next day.'));
+    } else out.push(tile('moonset', TI.moonset, 'Moonset', 'None', 'within a day and a half', moonPathSvg(true), 'It stays up, or stays down, all evening.', { words: true }));
+    // Moonlight for the walk back.
+    const lightWord = m.light >= 0.6 ? 'Bright' : m.light >= 0.3 ? 'Some' : m.light > 0.05 ? 'Faint' : 'None';
+    const lightNote = m.light >= 0.6 ? 'Enough to see the path by. A light still helps.' : m.light >= 0.3 ? 'Some light from the moon. Bring a torch.' : m.light > 0.05 ? 'The moon is low or slim. Bring a torch.' : 'A dark walk back. Bring a torch.';
+    out.push(tile('moonlight', TI.moon, 'Moonlight', lightWord, `at ${tm(headBack == null ? t.sunset + 90 * MIN : headBack)}, heading back`, sbar('moonlightbar', m.light * 100),
+      lightNote, { words: true }));
+    // How far away it is: closer looks bigger and brighter.
+    const pos = (m.distance - 356400) / (406700 - 356400) * 100;
+    const km = Math.round(m.distance / 100) * 100, mi = Math.round(m.distance / 1.609344 / 100) * 100, n = (v) => v.toLocaleString('en-US');
+    out.push(tile('moondist', TI.moon, 'Distance', both(imp ? `${n(mi)} mi · ${n(km)} km` : `${n(km)} km · ${n(mi)} mi`), '', `${sbar('distbar', pos)}<div class="scale two"><span>Closest</span><span>Farthest</span></div>`,
+      m.supermoon ? 'A supermoon: near and full, so it looks a little bigger and brighter.' : pos < 30 ? 'Near this month: it looks a little bigger.' : pos > 70 ? 'Far this month: it looks a little smaller.' : 'About its usual distance.', { words: true }));
+    return out;
+  }
+
   const tile = (cls, icon, title, value, sub, gfx, note, o) => `<section class="card dt a-${cls}${o && o.wide ? ' wide' : ''}" aria-label="${esc(title)}"><p class="eyebrow">${icon}<span>${esc(title)}</span>${o && o.aside ? `<span class="sp"></span><span class="aside">${o.aside}</span>` : ''}</p>
     <p class="dv${o && o.words ? ' words' : ''}">${value}</p>${sub ? `<p class="ds">${sub}</p>` : ''}${gfx ? `<div class="gfx">${gfx}</div>` : ''}${note ? `<p class="dn">${note}</p>` : ''}</section>`;
   const sbar = (cls, pct, tick) => `<div class="sbar ${cls}">${tick ? '<s></s>' : ''}<u data-l="${Math.max(0, Math.min(100, pct)).toFixed(0)}"></u></div>`;
@@ -648,9 +714,8 @@
       // Where and when the sun goes down.
       out.push(tile('sun', TI.sun, 'Sunset', esc(timeText(t.sunset, p.tz)), `${pointOf(t.azimuth)} · ${Math.round(t.azimuth)}°`, sunPathSvg(),
         t.state === 'twilight' ? 'Twilight lasts all night.' : `Best light ${esc(timeText(t.bestStart, p.tz))} to ${esc(timeText(t.bestEnd, p.tz))}.`));
-      // The moon at last light.
-      const at = t.lastLight != null ? t.lastLight : t.sunset + 90 * MIN, m = G.moonAt(at, p.lat, p.lon), ph = G.moonPhase(at).phase;
-      out.push(tile('moon', TI.moon, 'Moon', esc(m.name), `${Math.round(m.fraction * 100)}% lit`, moonSvg(ph), m.up ? 'Up at last light, for the walk back.' : 'Not up at last light.', { words: true }));
+      // The moon: its own tiles.
+      out.push(...moonTiles(t, p, t.state === 'ok' ? t.lastLight : t.sunset + 90 * MIN));
     }
     return out.length ? `<section class="details" aria-label="What’s behind the score"><div class="dgrid">${out.join('')}</div>
       ${r ? `<p class="small tilenote card">Clean air and comfort only count when there is a sky worth watching${r.gate < 0.995 ? ` (counted at ${Math.round(r.gate * 100)}% this evening)` : ''}.${r.cap ? ' This evening is capped at 1.5 stars.' : ''}</p>` : ''}</section>` : '';
