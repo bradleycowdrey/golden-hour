@@ -156,6 +156,7 @@
       precipitation: larger(p0.time, p0.precipitation, t), rainChance: larger(p0.time, p0.precipitation_probability, t),
       codes: both(p0.time, p0.weather_code, t),
       apparent: v('apparent_temperature', tc), wind: v('wind_speed_10m', tc), gusts: v('wind_gusts_10m', tc),
+      windFrom: p0.wind_direction_10m ? p0.wind_direction_10m[bracket(p0.time, tc) < 0 ? i : bracket(p0.time, tc)] : null,
       apparentLater: v('apparent_temperature', tb), windLater: v('wind_speed_10m', tb), gustsLater: v('wind_gusts_10m', tb),
       rain12,
       up: (up || []).map((u) => ({ low: interp(u.time, u.cloud_cover_low, t) || 0, mid: interp(u.time, u.cloud_cover_mid, t) || 0,
@@ -512,7 +513,7 @@
       something honest to show offline and in previews. */
   function sampleForecast(startMs, hours) {
     const time = [], rows = { cloud_cover_low: [], cloud_cover_mid: [], cloud_cover_high: [], visibility: [], precipitation: [],
-      precipitation_probability: [], weather_code: [], relative_humidity_2m: [], apparent_temperature: [], wind_speed_10m: [], wind_gusts_10m: [] };
+      precipitation_probability: [], weather_code: [], relative_humidity_2m: [], apparent_temperature: [], wind_speed_10m: [], wind_gusts_10m: [], wind_direction_10m: [] };
     const days = [
       { low: 5, mid: 20, high: 55, vis: 32000, rain: 0, pop: 5, code: 2, rh: 55, t: 19, wind: 2.5 },
       { low: 10, mid: 45, high: 30, vis: 26000, rain: 0, pop: 10, code: 2, rh: 60, t: 18, wind: 3.2 },
@@ -527,7 +528,7 @@
       rows.cloud_cover_low.push(d.low); rows.cloud_cover_mid.push(d.mid); rows.cloud_cover_high.push(d.high);
       rows.visibility.push(d.vis); rows.precipitation.push(d.rain); rows.precipitation_probability.push(d.pop);
       rows.weather_code.push(d.code); rows.relative_humidity_2m.push(d.rh);
-      rows.apparent_temperature.push(d.t - 3 * Math.cos((h % 24) / 24 * 2 * Math.PI)); rows.wind_speed_10m.push(d.wind); rows.wind_gusts_10m.push(d.wind * 1.5);
+      rows.apparent_temperature.push(d.t - 3 * Math.cos((h % 24) / 24 * 2 * Math.PI)); rows.wind_speed_10m.push(d.wind); rows.wind_gusts_10m.push(d.wind * 1.5); rows.wind_direction_10m.push(250 + 20 * (Math.floor(h / 24) % 4));
     }
     const upstream = (shift) => ({ time, cloud_cover_low: rows.cloud_cover_low.map((v) => Math.max(0, v - shift)), cloud_cover_mid: rows.cloud_cover_mid,
       cloud_cover_high: rows.cloud_cover_high });
