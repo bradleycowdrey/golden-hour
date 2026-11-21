@@ -13,7 +13,7 @@ leave, what to bring, and when to head home. It is in the same family as
 [Two Degrees](https://github.com/bradleycowdrey/two-degrees) and
 [Bearings](https://github.com/bradleycowdrey/bearings), and shows imperial and metric side by side.
 
-This is **Release 1** of the plan in [docs/SPEC.md](docs/SPEC.md). Version 0.6.0.
+This is **Release 1** of the plan in [docs/SPEC.md](docs/SPEC.md). Version 0.8.0.
 
 ## What it does
 
@@ -28,8 +28,15 @@ This is **Release 1** of the plan in [docs/SPEC.md](docs/SPEC.md). Version 0.6.0
   forecast: the better the sunset, the more vivid the screen, with drifting clouds lit from below.
 - **Laid out as Two Degrees lays out a city**: the reading on the sky in thin, large type; one line an
   evening with a bar for its colour; and a tile, with its own graphic, for every input to the score: colour,
-  cloud cover, cloud toward the sunset, air clarity, visibility, wind, feels like, rain, humidity, the sunset
-  and the moon.
+  cloud cover, cloud toward the sunset, air clarity, visibility, wind, feels like, rain, humidity and the sunset.
+- **Golden Hour Places**: where to watch from near each location, in four parts: landmarks that are easy to
+  reach, adventurous places that take some effort, dining with a view (may need a booking), and your own
+  spots. The top three of each sit at the foot of every location's page; each opens on its own screen with
+  directions, tonight's rating there and "Plan this evening here". Ranked from OpenStreetMap: well-known
+  places and places named for the sunset first.
+- **Share in one tap**: tonight's sunset (with a picture of the sky), any place, or the app itself.
+- **The moon this evening**: its phase and the month at a glance, where it is in the sky as the sun goes
+  down, moonrise and moonset, moonlight for the walk back, and how near it is.
 - **The evening's times**: golden hour, the best window, sunset, the afterglow and last light.
 - **The week**: six rated evenings, the best one marked, and four more with their sunset times. Days three
   to five are an outlook; beyond that it says "Too early to call".
@@ -65,6 +72,8 @@ it by hand. Bump `VERSION` and rebuild to release.
 - `node --test tests/core.test.js`: the rating against golden vectors (`tests/fixtures/vectors.json`,
   to be shared with the Swift and Kotlin ports), every threshold and cap, the reason sentences, evening
   times at several latitudes, plan times, the bring list, the share link and the calendar file.
+- `node --test tests/spots.test.js`: sorting and ranking Golden Hour Places, and place share links.
+- `node --test tests/moon.test.js`: the moon's phase, next full and new moons, moonrise and moonset, and moonlight.
 - `node tests/web.test.js [screenshots-dir]`: drives the built app in a browser (Playwright) with a
   stand-in forecast: first run, search, the rating and times, the week, compare, the whole plan flow,
   sharing, the calendar file, offline, every listed state, layout and tap targets at four widths, and

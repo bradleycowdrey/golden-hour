@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; worker-src 'self' blob:; child-src 'self' blob:; connect-src 'self' https://api.open-meteo.com https://air-quality-api.open-meteo.com https://archive-api.open-meteo.com https://geocoding-api.open-meteo.com https://tiles.openfreemap.org; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; worker-src 'self' blob:; child-src 'self' blob:; connect-src 'self' https://api.open-meteo.com https://air-quality-api.open-meteo.com https://archive-api.open-meteo.com https://geocoding-api.open-meteo.com https://tiles.openfreemap.org https://overpass-api.de https://overpass.private.coffee; base-uri 'none'; form-action 'none'">
 <title>Golden Hour: which evenings are worth it</title>
 <meta name="description" content="Golden Hour rates every coming sunset from 0 to 5 stars for the places you care about, and plans the evening: when to leave, what to bring, when to head home. Free and open source, by Bradley Cowdrey.">
 <meta name="theme-color" content="#1A1816">
@@ -35,7 +35,7 @@
 <div class="app" id="app">
   <div class="banner" id="banner" hidden role="status"></div>
   <main id="view"></main>
-  <nav class="bar" id="bar" aria-label="Plans, places"></nav>
+  <nav class="bar" id="bar" aria-label="Plans and locations"></nav>
 </div>
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 <script src="core.js"></script>

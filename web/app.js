@@ -20,7 +20,7 @@
   const settings = { imperialFirst: store.get('imperialFirst', G.prefersImperial(region)), compare: store.get('compare', false) };
 
   // ---------- IndexedDB (docs/SPEC.md 11.2), with an in-memory stand-in when the browser blocks it ----------
-  const STORES = { places: 'id', evenings: ['placeId', 'date'], plans: 'id', ratings: ['placeId', 'date'], snapshots: ['placeId', 'date'], cache: 'url' };
+  const STORES = { places: 'id', evenings: ['placeId', 'date'], plans: 'id', ratings: ['placeId', 'date'], snapshots: ['placeId', 'date'], cache: 'url', spots: 'id' };
   const db = (() => {
     let handle = null, blocked = false;
     const mem = {};
@@ -28,7 +28,7 @@
     const keyOf = (s, v) => { const k = STORES[s]; return Array.isArray(k) ? k.map((f) => v[f]).join('|') : v[k]; };
     const open = () => new Promise((res) => {
       try {
-        const rq = indexedDB.open('golden-hour', 1);
+        const rq = indexedDB.open('golden-hour', 2);
         rq.onupgradeneeded = () => { for (const [s, k] of Object.entries(STORES)) if (!rq.result.objectStoreNames.contains(s)) rq.result.createObjectStore(s, { keyPath: k }); };
         rq.onsuccess = () => res(rq.result);
         rq.onerror = rq.onblocked = () => res(null);
@@ -82,7 +82,7 @@
   const dist = (km) => two(G.distanceText(km, settings.imperialFirst));
 
   // ---------- State ----------
-  const S = { places: [], current: null, dayBy: {}, view: null, plans: [], ratings: [], results: null, notice: null, editing: false };
+  const S = { places: [], current: null, dayBy: {}, view: null, plans: [], ratings: [], spots: [], results: null, notice: null, editing: false };
   const DATA = {};   // placeId → {fc, source: 'live' | 'cache' | 'sample', fetchedAt, error, ceiling, prev: {date → {score, at}}, snaps: {date → snap}}
   const SAMPLE = { id: 'sample', name: 'Denver', region: 'Colorado', lat: 39.7392, lon: -104.9903, tz: 'America/Denver', sample: true };
   const place = (id) => S.places.find((p) => p.id === (id || S.current)) || S.places[0];
@@ -137,7 +137,7 @@
     const [a, b] = await Promise.all([getJSON(p0Url, 30 * MIN, 1), getJSON(upUrl, 30 * MIN, 4)]);
     const c = await getJSON(aqUrl, HOUR, 1).catch(() => null);
     const upList = Array.isArray(b.body) ? b.body : [b.body];
-    return { fc: { p0: hourly(a.body.hourly), up: upList.map((u) => hourly(u.hourly)), aq: c && c.body && c.body.hourly ? hourly(c.body.hourly) : null },
+    return { elevation: a.body.elevation, fc: { p0: hourly(a.body.hourly), up: upList.map((u) => hourly(u.hourly)), aq: c && c.body && c.body.hourly ? hourly(c.body.hourly) : null },
       fetchedAt: Math.min(a.fetchedAt, b.fetchedAt), stale: !!(a.stale || b.stale), ceiling: !!(a.ceiling || b.ceiling) };
   }
 
@@ -191,7 +191,7 @@
     const d = DATA[p.id] || (DATA[p.id] = { prev: {}, snaps: {} });
     if (p.sample) {
       const start = startOfDay(addDays(localDate(now(), p.tz), -1), p.tz);
-      Object.assign(d, { fc: G.sampleForecast(start, 9 * 24), source: 'sample', fetchedAt: now(), error: null });
+      Object.assign(d, { fc: G.sampleForecast(start, 9 * 24), source: 'sample', fetchedAt: now(), error: null, spots: finishSample(p) });
       return;
     }
     if (d.loading) return d.loading;
@@ -200,7 +200,7 @@
       try {
         const r = await fetchForecast(p.lat, p.lon);
         const first = d.fetchedAt !== r.fetchedAt;
-        Object.assign(d, { fc: r.fc, source: r.stale ? 'cache' : 'live', fetchedAt: r.fetchedAt, error: null, ceiling: r.ceiling });
+        Object.assign(d, { fc: r.fc, source: r.stale ? 'cache' : 'live', fetchedAt: r.fetchedAt, error: null, ceiling: r.ceiling, elevation: r.elevation });
         if (first) await remember(p);
       } catch (e) {
         d.error = e && e.ceiling ? 'ceiling' : 'network';
@@ -208,6 +208,7 @@
     })();
     await d.loading;
     fetchNormals(p);
+    if (d.fc && !d.spots && !d.spotsLoading) loadSpots(p).then(() => update(p));
   }
 
   /** Keeps what each evening scored: the forecast log "How was it?" compares against, the first reading of
@@ -353,7 +354,7 @@
   }
   /** The evening a place's page is showing, and its sky. */
   function shownEvening(p) { const evs = evenings(p), f = focusDay(p, evs); return evs[S.dayBy[p.id] == null ? f : S.dayBy[p.id]] || evs[f]; }
-  function skyOf(p) { const ev = shownEvening(p); setSky(ev.rating, ev.x, p.id + ev.date); }
+  function skyOf(p) { const ev = shownEvening(p); setSky(ev.rating, ev.x, p.id + ev.date); if (ev.rating) prepareCard(p); }
 
   function toast(text, action, onAction) {
     const t = $('#toast');
@@ -396,6 +397,9 @@
     else if (view && view.type === 'log') v.innerHTML = screen(logView());
     else if (view && view.type === 'plans') v.innerHTML = screen(plansView());
     else if (view && view.type === 'list') v.innerHTML = screen(listView());
+    else if (view && view.type === 'spots') v.innerHTML = screen(spotsView());
+    else if (view && view.type === 'spot') v.innerHTML = screen(spotView());
+    else if (view && view.type === 'addspot') v.innerHTML = screen(addSpotView());
     else {
       v.innerHTML = `<div class="pager" id="pager">${S.places.map((p) => `<section class="page" data-id="${esc(p.id)}" aria-label="${esc(p.name)}"><div class="inner">${pageHtml(p)}</div></section>`).join('')}</div>`;
       const pager = $('#pager');
@@ -407,7 +411,7 @@
     }
     drawBar(); drawBanner(); dyn(v);
     if (view && view.type === 'list') bindSearch();
-    if (view && (view.type === 'plan' || view.type === 'shared')) mountMap();
+    if (view && (view.type === 'plan' || view.type === 'shared' || view.type === 'spot' || view.type === 'addspot')) mountMap();
   }
   /** Redraws one place where it stands, so a forecast arriving never disturbs a swipe or what is being typed. */
   function update(p) {
@@ -416,6 +420,7 @@
       if (rows) { rows.innerHTML = listRows(); const c = $('#compare'); if (c) c.innerHTML = compareHtml(); dyn($('#view')); }
       return;
     }
+    if (S.view && S.view.type === 'spots' && S.view.placeId === p.id) return render();
     if (S.view) return;
     const pg = $$('.page').find((x) => x.dataset.id === p.id);
     if (!pg) return render();
@@ -466,7 +471,7 @@
       : S.places.map((p) => `<button type="button" class="dot" data-act="goto" data-id="${esc(p.id)}" aria-label="${esc(p.name)}"${p.id === S.current ? ' aria-current="true"' : ''}>${p.here ? BAR.here : '<i></i>'}</button>`).join('');
     bar.innerHTML = `<button type="button" class="barbtn" data-act="open-plans">${BAR.plans}<span>Plans</span></button>
       <div class="dots">${dots}</div>
-      <button type="button" class="barbtn" data-act="open-list">${BAR.list}<span>Places</span></button>`;
+      <button type="button" class="barbtn" data-act="open-list">${BAR.list}<span>Locations</span></button>`;
   }
 
   function drawBanner() {
@@ -512,12 +517,13 @@
   }
   function listView() {
     const real = S.places.filter((x) => !x.sample);
-    return `<div class="row top"><h1>Places</h1><span class="sp"></span>${unitsSeg()}<button type="button" class="btn white" data-act="close-view">Done</button></div>
+    return `<div class="row top"><h1>Locations</h1><span class="sp"></span>${unitsSeg()}<button type="button" class="btn white" data-act="close-view">Done</button></div>
       <section class="search card"><div class="box"><input id="q" type="search" placeholder="Search for a place to add" autocomplete="off" aria-label="Search for a place to add"></div>
         <div class="results" id="results" aria-live="polite"></div>
         <div class="row" data-gap><button type="button" class="btn" data-act="locate">Use my location</button><span class="sp"></span>${S.places.length > 1 ? `<button type="button" class="btn quiet" data-act="edit">${S.editing ? 'Done editing' : 'Edit'}</button>` : ''}</div></section>
       <div id="listRows" class="lrows">${listRows()}</div>
       ${real.length > 1 ? `<section class="card"><p class="eyebrow">Side by side<span class="sp"></span><button type="button" class="tog" data-act="compare" aria-pressed="${settings.compare}"><i></i>Compare places</button></p><div id="compare">${compareHtml()}</div></section>` : ''}
+      <section class="card sharecard"><div class="row"><span><b>Share Golden Hour</b><br><span class="small muted">Free, no account. Send it to someone who loves a sunset.</span></span><span class="sp"></span><button type="button" class="btn white" data-act="share-app">${SP.share}Share</button></div></section>
       ${footHtml()}`;
   }
   function bindSearch() { const q = $('#q'); if (q) { q.addEventListener('input', onSearchInput); if (S.focusSearch) { S.focusSearch = false; q.focus(); } } drawResults(); }
@@ -560,6 +566,8 @@
     damp: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3s6 6.500 6 11a6 6 0 0 1-12 0c0-4.500 6-11 6-11z" fill="none" stroke="currentColor" stroke-width="2"/></svg>',
     sun: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 18h18M6.500 18a5.500 5.500 0 0 1 11 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M12 6v3.500M9.500 7.500 12 10l2.500-2.500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     moon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.500A8 8 0 0 1 9.500 4a8 8 0 1 0 10.500 10.500z" fill="currentColor"/></svg>',
+    moonrise: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 19h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M16.500 15.500A5 5 0 0 1 10 9a5 5 0 1 0 6.500 6.500z" fill="currentColor"/><path d="M18.500 4v5M16.300 6.200 18.500 4l2.200 2.200" fill="none" stroke="currentColor" stroke-width="1.800" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    moonset: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 19h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M16.500 15.500A5 5 0 0 1 10 9a5 5 0 1 0 6.500 6.500z" fill="currentColor"/><path d="M18.500 4v5M16.300 6.800 18.500 9l2.200-2.200" fill="none" stroke="currentColor" stroke-width="1.800" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   };
   const POINTS = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
   const pointOf = (deg) => POINTS[Math.round(G.normalize(deg) / 22.5) % 16];
@@ -585,11 +593,75 @@
   /** The sun's path over the day, the horizon, and the moment it sets. */
   const sunPathSvg = () => `<div class="sunpath" aria-hidden="true"><svg viewBox="0 0 100 34" preserveAspectRatio="none"><path d="M0 22H100" stroke="rgba(255,255,255,.3)" stroke-width="1" vector-effect="non-scaling-stroke" fill="none"/><path d="M0 31C22 31 30 5 50 5S78 31 100 31" stroke="var(--acc)" stroke-width="1.600" vector-effect="non-scaling-stroke" fill="none" opacity=".85"/></svg><u></u></div>`;
   /** The moon as it is lit: phase 0 new, 0.25 first quarter, 0.5 full, 0.75 last quarter. */
-  function moonSvg(phase) {
-    const r = 15, k = Math.cos(phase * 2 * Math.PI), waxing = phase < 0.5, rx = Math.abs(k) * r;
-    const lit = `M18 3 A${r} ${r} 0 0 ${waxing ? 1 : 0} 18 33 A${rx.toFixed(2)} ${r} 0 0 ${(k > 0) === waxing ? 0 : 1} 18 3z`;
-    return `<svg class="moon" viewBox="0 0 36 36" aria-hidden="true"><circle cx="18" cy="18" r="${r}" fill="rgba(255,255,255,.14)"/><path d="${lit}" fill="#E9DCC8"/></svg>`;
+  function moonSvg(phase, size) {
+    const r = 15, k = Math.cos(phase * 2 * Math.PI), waxing = phase < 0.5, rx = Math.abs(k) * r, id = uid();
+    // The lit part: half a disc on the sunward side, plus or minus half an ellipse at the terminator.
+    const lit = phase < 0.02 || phase > 0.98 ? '' : `M18 3 A${r} ${r} 0 0 ${waxing ? 1 : 0} 18 33 A${rx.toFixed(2)} ${r} 0 0 ${(k > 0) === waxing ? 0 : 1} 18 3z`;
+    return `<svg class="moon${size ? ' ' + size : ''}" viewBox="0 0 36 36" aria-hidden="true"><defs><radialGradient id="${id}" cx=".42" cy=".38" r=".7"><stop offset="0" stop-color="#FFFBEE"/><stop offset=".7" stop-color="#EFE3C4"/><stop offset="1" stop-color="#D9CBA6"/></radialGradient></defs>
+      <circle cx="18" cy="18" r="${r}" fill="#3A3A46"/><circle cx="18" cy="18" r="${r}" fill="none" stroke="rgba(255,255,255,.18)" stroke-width=".8"/>${lit ? `<path d="${lit}" fill="url(#${id})"/>` : ''}
+      ${lit ? '<g fill="#000" opacity=".07"><circle cx="13" cy="13" r="3"/><circle cx="21" cy="21" r="2.2"/><circle cx="23.500" cy="12" r="1.600"/><circle cx="14" cy="23.500" r="1.400"/></g>' : ''}</svg>`;
   }
+  // ---------- The moon this evening: its own tiles ----------
+  /** The lunar month as eight moons, new to new, with this evening's ringed. */
+  function phaseStrip(phase) {
+    const at = Math.round(phase * 8) % 8;
+    return `<div class="phases">${[0, 1, 2, 3, 4, 5, 6, 7].map((i) => `<span class="${i === at ? 'on' : ''}">${moonSvg(i / 8, 'sm')}</span>`).join('')}</div>
+      <div class="scale four"><span>New</span><span>First quarter</span><span>Full</span><span>Last quarter</span></div>`;
+  }
+  /** The moon's arc over the sky, and where it meets the horizon: rising on the left, setting on the right. */
+  const moonPathSvg = (setting) => `<div class="sunpath moonpath${setting ? ' setting' : ''}" aria-hidden="true"><svg viewBox="0 0 100 34" preserveAspectRatio="none"><path d="M0 22H100" stroke="rgba(255,255,255,.3)" stroke-width="1" vector-effect="non-scaling-stroke" fill="none"/><path d="M0 31C22 31 30 5 50 5S78 31 100 31" stroke="var(--acc)" stroke-width="1.600" vector-effect="non-scaling-stroke" fill="none" opacity=".85" stroke-dasharray="${setting ? '0' : '3 3'}"/></svg><u></u></div>`;
+  /** The whole horizon, north round to north: the sun where it goes down, the moon where it is
+      (above the line when it is up, a dashed outline below when it is not), and the compass points. */
+  function horizonSvg(m) {
+    const xOf = (az) => (G.normalize(az) / 360) * 340 + 10;   // the whole horizon, north to north
+    const H = 66, alt = Math.max(-18, Math.min(60, m.altitude)), my = H - alt * (52 / 60);
+    const marks = [['N', 0], ['E', 90], ['S', 180], ['W', 270], ['N', 359.99]].map(([l, a]) => `<text x="${xOf(a).toFixed(1)}" y="${H + 18}" text-anchor="middle">${l}</text><line x1="${xOf(a).toFixed(1)}" y1="${H - 3}" x2="${xOf(a).toFixed(1)}" y2="${H + 3}" stroke="rgba(255,255,255,.5)" stroke-width="1.200"/>`).join('');
+    const moon = m.altitude >= 0 ? `<circle cx="${xOf(m.azimuth).toFixed(1)}" cy="${my.toFixed(1)}" r="8" fill="#F1E6C8"/><circle cx="${xOf(m.azimuth).toFixed(1)}" cy="${my.toFixed(1)}" r="14" fill="#F1E6C8" opacity=".14"/>`
+      : `<circle cx="${xOf(m.azimuth).toFixed(1)}" cy="${Math.min(H + 12, my).toFixed(1)}" r="7" fill="none" stroke="#F1E6C8" stroke-width="1.300" stroke-dasharray="2.500 2.500" opacity=".8"/>`;
+    return `<svg class="horizon" viewBox="0 0 360 ${H + 26}" aria-hidden="true"><defs><linearGradient id="hz" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFB45A" stop-opacity="0"/><stop offset="1" stop-color="#FFB45A" stop-opacity=".35"/></linearGradient></defs>
+      <rect x="${(xOf(m.sunAzimuth) - 60).toFixed(1)}" y="${H - 30}" width="120" height="30" fill="url(#hz)"/><path d="M${(xOf(m.sunAzimuth) - 11).toFixed(1)} ${H}a11 11 0 0 1 22 0z" fill="#FFB347"/>
+      <line x1="10" y1="${H}" x2="350" y2="${H}" stroke="rgba(255,255,255,.55)" stroke-width="1.400"/>${marks}${moon}</svg>`;
+  }
+  /** The moon tiles for an evening. */
+  function moonTiles(t, p, headBack) {
+    const m = G.moonEvening(t.sunset, p.lat, p.lon, headBack), imp = settings.imperialFirst, out = [];
+    const tm = (ms) => esc(timeText(ms, p.tz)), day = (ms) => esc(new Intl.DateTimeFormat(navigator.language || 'en-US', { timeZone: tzOr(p.tz), weekday: 'short', month: 'short', day: 'numeric' }).format(ms));
+    const both = (text) => { const [a, b] = text.split(' · '); return `${esc(a)}<span class="u2">${esc(b)}</span>`; };
+    const opposite = Math.abs(G.normalize(m.azimuth - m.sunAzimuth + 180) - 180) > 120;
+    const nextFullFirst = m.nextFull != null && (m.nextNew == null || m.nextFull < m.nextNew);
+    // The phase, and where this evening sits in the month.
+    out.push(tile('moonph', TI.moon, 'Moon', esc(m.name), `${Math.round(m.fraction * 100)}% lit · day ${Math.round(m.age)} of ${Math.round(G.SYNODIC)}`, `<div class="moonbig">${moonSvg(m.phase, 'lg')}</div>${phaseStrip(m.phase)}`,
+      `${m.waxing ? 'Growing' : 'Shrinking'} each night. ${nextFullFirst ? `Full on ${day(m.nextFull)}` : `New on ${day(m.nextNew)}`}, then ${nextFullFirst ? `new on ${day(m.nextNew)}` : `full on ${day(m.nextFull)}`}.`,
+      { wide: true, words: true, aside: m.supermoon ? 'Supermoon' : '' }));
+    // In the sky at sunset: the horizon you are facing, with the sun and the moon on it.
+    const where = m.upAtSunset ? `${Math.round(m.altitude)}° up in the ${compass(m.azimuth)}` : `Below the horizon, ${compass(m.azimuth)}`;
+    out.push(tile('moonsky', TI.moon, 'At sunset', esc(m.upAtSunset ? 'In the sky' : 'Not up yet'), esc(where), horizonSvg(m),
+      m.upAtSunset && opposite && m.fraction > 0.8 ? 'Opposite the sun: turn around as it sets to watch the moon glow.' : m.upAtSunset ? 'Look for it as the colour fades.' : m.rise && m.rise.time > t.sunset ? `It rises at ${tm(m.rise.time)}.` : 'Not in the sky this evening.',
+      { wide: true, words: true }));
+    // Moonrise and moonset nearest the evening.
+    if (m.rise) {
+      const gap = Math.round((m.rise.time - t.sunset) / MIN), rel = Math.abs(gap) < 2 ? 'with the sunset' : `${Math.abs(gap) >= 90 ? `${Math.round(Math.abs(gap) / 6) / 10} h` : `${Math.abs(gap)} min`} ${gap < 0 ? 'before' : 'after'} sunset`;
+      out.push(tile('moonrise', TI.moonrise, 'Moonrise', tm(m.rise.time), `${pointOf(m.rise.azimuth)} · ${Math.round(m.rise.azimuth)}°`, moonPathSvg(false),
+        Math.abs(gap) <= 60 && m.fraction > 0.8 ? `${rel[0].toUpperCase() + rel.slice(1)}, low and golden in the ${compass(m.rise.azimuth)}.` : `${rel[0].toUpperCase() + rel.slice(1)}.`));
+    } else out.push(tile('moonrise', TI.moonrise, 'Moonrise', 'None', 'within a day and a half', moonPathSvg(false), 'It stays up, or stays down, all evening.', { words: true }));
+    if (m.set) {
+      const gap = Math.round((m.set.time - t.sunset) / MIN);
+      out.push(tile('moonset', TI.moonset, 'Moonset', tm(m.set.time), `${pointOf(m.set.azimuth)} · ${Math.round(m.set.azimuth)}°`, moonPathSvg(true),
+        gap < 4 * 60 ? 'Goes down during the evening.' : gap < 12 * 60 ? 'Up for most of the night.' : 'Sets the next day.'));
+    } else out.push(tile('moonset', TI.moonset, 'Moonset', 'None', 'within a day and a half', moonPathSvg(true), 'It stays up, or stays down, all evening.', { words: true }));
+    // Moonlight for the walk back.
+    const lightWord = m.light >= 0.6 ? 'Bright' : m.light >= 0.3 ? 'Some' : m.light > 0.05 ? 'Faint' : 'None';
+    const lightNote = m.light >= 0.6 ? 'Enough to see the path by. A light still helps.' : m.light >= 0.3 ? 'Some light from the moon. Bring a torch.' : m.light > 0.05 ? 'The moon is low or slim. Bring a torch.' : 'A dark walk back. Bring a torch.';
+    out.push(tile('moonlight', TI.moon, 'Moonlight', lightWord, `at ${tm(headBack == null ? t.sunset + 90 * MIN : headBack)}, heading back`, sbar('moonlightbar', m.light * 100),
+      lightNote, { words: true }));
+    // How far away it is: closer looks bigger and brighter.
+    const pos = (m.distance - 356400) / (406700 - 356400) * 100;
+    const km = Math.round(m.distance / 100) * 100, mi = Math.round(m.distance / 1.609344 / 100) * 100, n = (v) => v.toLocaleString('en-US');
+    out.push(tile('moondist', TI.moon, 'Distance', both(imp ? `${n(mi)} mi · ${n(km)} km` : `${n(km)} km · ${n(mi)} mi`), '', `${sbar('distbar', pos)}<div class="scale two"><span>Closest</span><span>Farthest</span></div>`,
+      m.supermoon ? 'A supermoon: near and full, so it looks a little bigger and brighter.' : pos < 30 ? 'Near this month: it looks a little bigger.' : pos > 70 ? 'Far this month: it looks a little smaller.' : 'About its usual distance.', { words: true }));
+    return out;
+  }
+
   const tile = (cls, icon, title, value, sub, gfx, note, o) => `<section class="card dt a-${cls}${o && o.wide ? ' wide' : ''}" aria-label="${esc(title)}"><p class="eyebrow">${icon}<span>${esc(title)}</span>${o && o.aside ? `<span class="sp"></span><span class="aside">${o.aside}</span>` : ''}</p>
     <p class="dv${o && o.words ? ' words' : ''}">${value}</p>${sub ? `<p class="ds">${sub}</p>` : ''}${gfx ? `<div class="gfx">${gfx}</div>` : ''}${note ? `<p class="dn">${note}</p>` : ''}</section>`;
   const sbar = (cls, pct, tick) => `<div class="sbar ${cls}">${tick ? '<s></s>' : ''}<u data-l="${Math.max(0, Math.min(100, pct)).toFixed(0)}"></u></div>`;
@@ -648,9 +720,8 @@
       // Where and when the sun goes down.
       out.push(tile('sun', TI.sun, 'Sunset', esc(timeText(t.sunset, p.tz)), `${pointOf(t.azimuth)} · ${Math.round(t.azimuth)}°`, sunPathSvg(),
         t.state === 'twilight' ? 'Twilight lasts all night.' : `Best light ${esc(timeText(t.bestStart, p.tz))} to ${esc(timeText(t.bestEnd, p.tz))}.`));
-      // The moon at last light.
-      const at = t.lastLight != null ? t.lastLight : t.sunset + 90 * MIN, m = G.moonAt(at, p.lat, p.lon), ph = G.moonPhase(at).phase;
-      out.push(tile('moon', TI.moon, 'Moon', esc(m.name), `${Math.round(m.fraction * 100)}% lit`, moonSvg(ph), m.up ? 'Up at last light, for the walk back.' : 'Not up at last light.', { words: true }));
+      // The moon: its own tiles.
+      out.push(...moonTiles(t, p, t.state === 'ok' ? t.lastLight : t.sunset + 90 * MIN));
     }
     return out.length ? `<section class="details" aria-label="What’s behind the score"><div class="dgrid">${out.join('')}</div>
       ${r ? `<p class="small tilenote card">Clean air and comfort only count when there is a sky worth watching${r.gate < 0.995 ? ` (counted at ${Math.round(r.gate * 100)}% this evening)` : ''}.${r.cap ? ' This evening is capped at 1.5 stars.' : ''}</p>` : ''}</section>` : '';
@@ -672,7 +743,7 @@
     const d = DATA[p.id] || {}, evs = evenings(p), f = focusDay(p, evs);
     const ev = evs[S.dayBy[p.id] == null ? f : S.dayBy[p.id]] || evs[f], r = ev.rating;
     const label = evLabel(ev, p, evs);
-    const head = `<h2>${esc(p.name)}${p.sample ? ' <span class="tag">Sample</span>' : ''}</h2><p class="when">${esc(label)} · ${esc(dayName(ev.date, true))}, ${esc(dateText(ev.date))}${p.region ? ` · ${esc(p.region)}` : ''}</p>`;
+    const head = `<button type="button" class="circle heroshare" data-act="share-today" aria-label="Share ${esc(label.toLowerCase())}’s sunset">${SP.share}</button><h2>${esc(p.name)}${p.sample ? ' <span class="tag">Sample</span>' : ''}</h2><p class="when">${esc(label)} · ${esc(dayName(ev.date, true))}, ${esc(dateText(ev.date))}${p.region ? ` · ${esc(p.region)}` : ''}</p>`;
     let hero;
     if (ev.times.state === 'none') hero = `<section class="hero">${head}<p class="none">No sunset here on this date</p><p class="cond">${ev.times.polar === 'day' ? 'The sun stays up all night.' : 'The sun stays below the horizon.'}</p></section>`;
     else if (r) {
@@ -693,12 +764,12 @@
     const warns = r ? r.warnings.map((w) => `<div class="warn" role="note">${ICON.warn}<span>${esc(w.text)}</span></div>`).join('') : '';
     const canPlan = ev.times.state !== 'none' && now() < endOf(ev, p);
     const cta = canPlan ? `<div class="cta"><button type="button" class="btn white" data-act="plan-new" data-date="${ev.date}">Plan this evening</button></div>` : '';
-    const sample = p.sample ? `<section class="card ask"><h3>This is a sample forecast</h3><p>Add your own place to see the real one. You can add several and swipe between them.</p><div class="row" data-gap><button type="button" class="btn white" data-act="add-place">Add a place</button></div></section>` : '';
+    const sample = p.sample ? `<section class="card ask"><h3>This is a sample forecast</h3><p>Add where you are to see the real one. You can add several locations and swipe between them.</p><div class="row" data-gap><button type="button" class="btn white" data-act="add-place">Add a location</button></div></section>` : '';
     const back = S.dayBy[p.id] != null && S.dayBy[p.id] !== f ? `<button type="button" class="btn quiet back" data-act="day" data-day="">‹ Back to ${f === 1 ? 'tomorrow' : 'tonight'}</button>` : '';
     const best = bestOf(evs);
-    const week = `<section class="card daily"><p class="eyebrow">${TI.cal}<span>The next ten evenings</span><span class="sp"></span><span class="aside">Colour</span></p><div class="days">${evs.map((e) => dayRow(e, p, evs, best, ev)).join('')}</div>
+    const week = `<section class="card daily"><p class="eyebrow">${TI.cal}<span>The evenings ahead</span><span class="sp"></span><span class="aside">Colour</span></p><div class="days">${evs.filter((e) => e.rating || e.times.state === 'none' || e.day <= 5).map((e) => dayRow(e, p, evs, best, ev)).join('')}${(() => { const later = evs.find((e) => !e.rating && e.day > 5); return later ? `<div class="day later"><span class="why">${esc(dayName(later.date, true))}, ${esc(dateText(later.date))} and beyond: too early to call</span></div>` : ''; })()}</div>
       <p class="small muted" data-gap>The bar is the colour score. Tap an evening to see it above. Days three to five are an outlook and may change.</p></section>`;
-    return `${back}<div class="two"><div class="col">${hero}${warns}${cta}${sample}</div><div class="col">${howWasIt(p, evs)}${ev.times.state === 'none' ? '' : eveningCard(ev, p)}${week}</div></div>${tilesHtml(ev, p)}${footHtml()}`;
+    return `${back}<div class="two"><div class="col">${hero}${warns}${cta}${sample}</div><div class="col">${howWasIt(p, evs)}${ev.times.state === 'none' ? '' : eveningCard(ev, p)}${week}</div></div>${tilesHtml(ev, p)}${placesSection(p)}${footHtml()}`;
   }
   const compass = (deg) => ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'][Math.round(G.normalize(deg) / 45) % 8];
 
@@ -928,8 +999,8 @@
   function mountMap() {
     const slot = $('#map');
     if (!slot) return;
-    const v = S.view, shared = v.type === 'shared';
-    const spot = shared ? (v.plan && v.plan.spot) : v.draft.spot;
+    const v = S.view, shared = v.type === 'shared' || v.type === 'spot';
+    const spot = v.type === 'shared' ? (v.plan && v.plan.spot) : v.type === 'spot' ? v.spot : v.draft.spot;
     if (shared && !spot) return;
     if (!v.key) v.key = ++viewSeq;
     if (mapEl && mapKey === v.key) { slot.replaceWith(mapEl); if (map) { map.resize(); syncMarker(spot, shared); } return; }
@@ -970,6 +1041,247 @@
     } catch { return null; }
   }
 
+  // ---------- Golden Hour Places: where to go, near each location ----------
+  const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.private.coffee/api/interpreter'];
+  const SPOT_TTL = 14 * DAY;
+  const CATS = [
+    { key: 'easy', title: 'Landmarks', sub: 'Well-known spots, easy to reach', icon: 'landmark' },
+    { key: 'adventurous', title: 'Adventurous', sub: 'Worth the effort: a drive up, a hike or a climb', icon: 'peak' },
+    { key: 'dining', title: 'Dining with a view', sub: 'Terraces and rooftops. You may need to book', icon: 'dining' },
+  ];
+  const EFFORT = { easy: 'Easy to reach', medium: 'Medium effort', high: 'High effort', low: 'Easy to reach' };
+  const SP = {
+    landmark: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h16M6 20V10l6-5 6 5v10M10 20v-5h4v5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    peak: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.500 20 9 8l3.500 6 2.500-3.500L21.500 20z" fill="currentColor"/><path d="M9 8 7.300 11.200 9 10.500l1.600.9z" fill="#fff" opacity=".7"/></svg>',
+    dining: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3v8a2 2 0 0 0 2 2v8M5 3v5M9 3v5M16.500 21V3c-2 0-3.500 2.500-3.500 6v4h3.500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    heart: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20s-7.500-4.600-7.500-10.200A4.300 4.300 0 0 1 12 7.300a4.300 4.300 0 0 1 7.500 2.500C19.500 15.400 12 20 12 20z" fill="currentColor"/></svg>',
+    share: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V3.500M7.500 8 12 3.500 16.500 8M5 12v7.500A1.500 1.500 0 0 0 6.500 21h11a1.500 1.500 0 0 0 1.500-1.500V12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    chev: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.200" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    car: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 16V11l2-5h10l2 5v5M3.500 11h17M5 16h14v2.500H5zM7.500 13.500h.01M16.500 13.500h.01" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  };
+  const catIcon = (cat) => SP[{ easy: 'landmark', adventurous: 'peak', dining: 'dining', own: 'heart' }[cat] || 'landmark'];
+  /** Places a sample location shows without asking the network, so the first look has something in it. */
+  const SAMPLE_SPOTS = (() => {
+    const mk = (cat, name, kind, lat, lon, extra) => ({ id: 'sample/' + name, name, cat, kind, lat, lon, famous: true, sunsetNamed: /sunset/i.test(name), faces: null, sample: true, ...extra });
+    return {
+      easy: [mk('easy', 'Inspiration Point Park', 'Viewpoint', 39.7826, -105.0566), mk('easy', 'Sloan’s Lake Park', 'Park', 39.7499, -105.0453), mk('easy', 'Cheesman Park Pavilion', 'Park', 39.7329, -104.9668),
+        mk('easy', 'Riverside Cemetery Overlook', 'Viewpoint', 39.7856, -104.9671), mk('easy', 'Ruby Hill Park', 'Park', 39.6865, -105.0007), mk('easy', 'Sunset Park', 'Park', 39.6981, -104.8767)],
+      adventurous: [mk('adventurous', 'Lookout Mountain', 'Viewpoint', 39.7322, -105.2392, { ele: 2190, gain: 581, effort: 'medium' }), mk('adventurous', 'Green Mountain', 'Summit', 39.6935, -105.1488, { ele: 2005, gain: 396, effort: 'medium' }),
+        mk('adventurous', 'Mount Galbraith', 'Summit', 39.7707, -105.2531, { ele: 2265, gain: 656, effort: 'high' }), mk('adventurous', 'Mount Falcon', 'Summit', 39.6375, -105.2392, { ele: 2370, gain: 761, effort: 'high' }),
+        mk('adventurous', 'Mount Evans', 'Summit', 39.5883, -105.6438, { ele: 4348, gain: 2739, effort: 'high' })],
+      dining: [mk('dining', 'Linger', 'Restaurant', 39.7597, -105.0113, { effort: 'low' }), mk('dining', 'Avanti F&B', 'Bar', 39.7637, -105.0102, { effort: 'low' }),
+        mk('dining', 'Mile High Rooftop', 'Bar', 39.7473, -104.9947, { effort: 'low' }), mk('dining', 'Will Call', 'Bar', 39.7589, -104.9998, { effort: 'low' }),
+        mk('dining', 'Departure Rooftop', 'Restaurant', 39.7186, -104.9532, { effort: 'low' })],
+    };
+  })();
+
+  /** Finds the Golden Hour Places around a location, once a fortnight. */
+  async function loadSpots(p) {
+    const d = DATA[p.id] || (DATA[p.id] = { prev: {}, snaps: {} });
+    if (p.sample) { d.spots = finishSample(p); return; }
+    if (d.spots && d.spots !== 'error') return;
+    if (d.spotsLoading) return d.spotsLoading;
+    d.spotsLoading = (async () => {
+      const q = G.spotsQuery(Math.round(p.lat * 100) / 100, Math.round(p.lon * 100) / 100);
+      let body = null;
+      for (const base of OVERPASS) {
+        try { body = (await getJSON(`${base}?data=${encodeURIComponent(q)}`, SPOT_TTL, 0, false)).body; break; } catch { /* try the next */ }
+      }
+      if (!body) { d.spots = 'error'; return; }
+      const evs = evenings(p), az = evs[0].times.azimuth;
+      d.spots = G.rankSpots(body.elements, { lat: p.lat, lon: p.lon, elevation: d.elevation == null ? null : d.elevation, facing: az });
+    })();
+    try { await d.spotsLoading; } finally { d.spotsLoading = null; }
+  }
+  function finishSample(p) {
+    const out = {};
+    for (const [k, list] of Object.entries(SAMPLE_SPOTS)) out[k] = list.map((s) => { const km = G.distance(p.lat, p.lon, s.lat, s.lon) / 1000; return { effort: k === 'easy' ? 'easy' : s.effort, ...s, km, travel: G.travelMinutes(km) }; });
+    return out;
+  }
+  /** Your own spots near a location (within 100 km). */
+  const ownSpots = (p) => S.spots.filter((s) => G.distance(p.lat, p.lon, s.lat, s.lon) < 100000)
+    .map((s) => { const km = G.distance(p.lat, p.lon, s.lat, s.lon) / 1000; return { ...s, km, travel: G.travelMinutes(km) }; }).sort((a, b) => a.km - b.km);
+  const allSpots = (p) => { const d = DATA[p.id] || {}; return d.spots && typeof d.spots === 'object' ? d.spots : null; };
+  function findSpot(p, id) {
+    const s = allSpots(p);
+    for (const list of s ? Object.values(s) : []) { const hit = list.find((x) => x.id === id); if (hit) return hit; }
+    return ownSpots(p).find((x) => x.id === id) || null;
+  }
+
+  const away = (s) => `${s.km < 0.2 ? 'Here' : `${esc(G.distanceText(s.km, settings.imperialFirst, true))} · about ${s.travel} min`}`;
+  /** One row for a place: its picture, name, what it is, how far and how hard. */
+  function spotRow(s, p, i) {
+    const effort = s.cat === 'own' ? 'Your spot' : s.cat === 'dining' ? 'May need a booking' : EFFORT[s.effort] || '';
+    return `<button type="button" class="srow" data-act="spot-open" data-id="${esc(s.id)}" data-place="${esc(p.id)}">
+      <span class="sbadge c-${s.cat}${i != null ? ' ranked' : ''}">${i != null ? `<b>${i + 1}</b>` : catIcon(s.cat)}</span>
+      <span class="sl"><span class="n">${esc(s.name)}</span><span class="r">${esc(s.kind || G.SPOT_CAT[s.cat] || '')} · ${away(s)}</span><span class="e e-${esc(s.effort || 'own')}">${esc(effort)}</span></span>
+      <span class="chev">${SP.chev}</span></button>`;
+  }
+  /** At the foot of each location's page: the top three of each kind, and the way in to all of them. */
+  function placesSection(p) {
+    const s = allSpots(p), d = DATA[p.id] || {}, mine = ownSpots(p);
+    const head = `<div class="sechead"><h3>Golden Hour Places</h3><p>Where to watch from near ${esc(p.name)}</p></div>`;
+    let body;
+    if (!s && d.spots === 'error') body = `<section class="card"><p>Couldn’t load places near ${esc(p.name)}.</p><div class="row" data-gap><button type="button" class="btn" data-act="spots-retry">Try again</button></div></section>`;
+    else if (!s) body = `<section class="card skeleton" aria-busy="true"><p class="muted">Finding sunset places near ${esc(p.name)}…</p><div class="bone" data-w="70"></div><div class="bone" data-w="55"></div></section>`;
+    else body = CATS.map((c) => {
+      const list = s[c.key].slice(0, 3);
+      return `<section class="card spotcard"><p class="eyebrow">${SP[c.icon]}<span>${c.title}</span><span class="sp"></span><span class="aside">${s[c.key].length ? `Top ${list.length}` : ''}</span></p>
+        ${list.length ? list.map((x, i) => spotRow(x, p, i)).join('') : `<p class="small muted">None found nearby in open map data.</p>`}</section>`;
+    }).join('') + (mine.length ? `<section class="card spotcard"><p class="eyebrow">${SP.heart}<span>Your spots</span></p>${mine.slice(0, 3).map((x) => spotRow(x, p)).join('')}</section>` : '');
+    return `<section class="ghplaces" aria-label="Golden Hour Places">${head}${body}
+      <div class="cta"><button type="button" class="btn white" data-act="spots-all" data-place="${esc(p.id)}">See all Golden Hour Places</button></div></section>`;
+  }
+
+  /** The full list, in four parts: landmarks, adventurous places, dining with a view, and your own. */
+  function spotsView() {
+    const v = S.view, p = place(v.placeId), s = allSpots(p), mine = ownSpots(p), d = DATA[p.id] || {};
+    skyOf(p);
+    const part = (c, list) => {
+      const open = v.expanded[c.key], shown = open ? list : list.slice(0, 5);
+      return `<section class="card spotcard"><p class="eyebrow">${SP[c.icon]}<span>${c.title}</span></p><p class="catsub">${c.sub}</p>
+        ${shown.length ? shown.map((x, i) => spotRow(x, p, i)).join('') : '<p class="small muted">None found nearby in open map data.</p>'}
+        ${list.length > 5 ? `<button type="button" class="more" data-act="spots-more" data-k="${c.key}">${open ? 'Show fewer' : `Show ${list.length - 5} more`}</button>` : ''}</section>`;
+    };
+    const lists = !s ? `<section class="card">${d.spots === 'error' ? `<p>Couldn’t load places near ${esc(p.name)}.</p><div class="row" data-gap><button type="button" class="btn" data-act="spots-retry">Try again</button></div>` : `<p class="muted">Finding sunset places near ${esc(p.name)}…</p>`}</section>`
+      : CATS.map((c) => part(c, s[c.key])).join('');
+    return `<div class="row top"><button type="button" class="btn quiet back" data-act="close-view">‹ ${esc(p.name)}</button><span class="sp"></span>
+        <button type="button" class="circle" data-act="share-app" aria-label="Share Golden Hour">${SP.share}</button></div>
+      <header class="screenhead"><h1>Golden Hour Places</h1><p>Where to watch the sunset near ${esc(p.name)}${p.sample ? ' (sample)' : ''}</p></header>
+      ${lists}
+      <section class="card spotcard"><p class="eyebrow">${SP.heart}<span>Your spots</span></p><p class="catsub">Places you love to watch from. Only on this device.</p>
+        ${mine.length ? mine.map((x) => spotRow(x, p)).join('') : '<p class="small muted">None yet.</p>'}
+        <div class="row" data-gap><button type="button" class="btn white" data-act="spot-add" data-place="${esc(p.id)}">Add your own spot</button></div></section>
+      <p class="small credit">${p.sample ? 'Sample places. ' : ''}From OpenStreetMap: well-known places, and places named for the sunset, come first. Effort is estimated from how high a place is above ${esc(p.name)}.</p>`;
+  }
+
+  /** One place, the whole screen: what it is, how to get there, tonight's sunset, and what to do next. */
+  function spotView() {
+    const v = S.view, p = place(v.placeId) || place(), sp = v.spot, own = sp.cat === 'own', saved = S.spots.some((x) => x.id === sp.id || (Math.abs(x.lat - sp.lat) < 1e-4 && Math.abs(x.lon - sp.lon) < 1e-4));
+    const km = G.distance(p.lat, p.lon, sp.lat, sp.lon) / 1000, travel = G.travelMinutes(km), ev = shownEvening(p), r = ev.rating;
+    setSky(r, ev.x, p.id + ev.date);
+    const effort = own ? 'Your spot' : sp.cat === 'dining' ? 'May need a booking' : EFFORT[sp.effort] || '';
+    const facts = [];
+    facts.push(`${km < 0.2 ? 'Right here' : `${esc(G.distanceText(km, settings.imperialFirst))} from ${esc(p.name)}, about ${travel} min by car`}.`);
+    if (sp.ele != null) facts.push(`Elevation ${Math.round(sp.ele * 3.28084).toLocaleString('en-US')} ft · ${Math.round(sp.ele).toLocaleString('en-US')} m${sp.gain != null ? `, ${Math.round(sp.gain * 3.28084).toLocaleString('en-US')} ft · ${Math.round(sp.gain).toLocaleString('en-US')} m above ${esc(p.name)}` : ''}.`);
+    if (sp.faces === true) facts.push('Faces the sunset.');
+    if (sp.faces === false) facts.push('Faces away from the sunset: look for a clear view west.');
+    if (sp.hours) facts.push(`Hours: ${esc(sp.hours)}. Check before you go.`);
+    else if (sp.cat === 'dining') facts.push('Opening hours unknown. Check before you go, and book for an hour before sunset.');
+    if (sp.fee === 'yes') facts.push('There may be a fee.');
+    if (sp.dog === 'yes') facts.push('Dogs allowed.'); else if (sp.dog === 'no') facts.push('No dogs.');
+    if (sp.wheelchair === 'yes') facts.push('Step-free access.');
+    const tonight = r ? `<section class="card"><p class="eyebrow">${TI.colour}<span>${esc(evLabel(ev, p, evenings(p)))} here</span></p>
+        <div class="tonight"><span class="big num">${scoreText(r)}</span><span class="tl2">${stars(r.tier === 'outlook' ? r.shown : r.score, r.tier === 'outlook', true)}<b class="c-${r.colourClass.toLowerCase()}">${r.colourClass} colour</b><span class="v ${r.verdict}">${icon(r)}${r.verdictWord}</span></span></div>
+        <p class="small muted">Sunset ${esc(timeText(ev.times.sunset, p.tz))}. ${esc(r.reason)}${km > 15 ? ` Forecast for ${esc(p.name)}.` : ''}</p></section>` : '';
+    const links = [sp.website ? `<a class="btn" href="${esc(sp.website)}" target="_blank" rel="noopener">Website</a>` : '', sp.phone ? `<a class="btn" href="tel:${esc(sp.phone.replace(/[^\d+]/g, ''))}">Call to book</a>` : ''].join('');
+    return `<div class="row top"><button type="button" class="btn quiet back" data-act="close-view">‹ ${v.from === 'all' ? 'Golden Hour Places' : esc(p.name)}</button><span class="sp"></span>
+        <button type="button" class="circle" data-act="share-spot" aria-label="Share ${esc(sp.name)}">${SP.share}</button></div>
+      <section class="hero spothero"><span class="sbadge big c-${sp.cat}">${catIcon(sp.cat)}</span><h2>${esc(sp.name)}</h2><p class="when">${esc(sp.kind || G.SPOT_CAT[sp.cat] || 'Your spot')} · ${esc(effort)}</p>${v.shared ? '<p class="when">Shared with you</p>' : ''}</section>
+      <div class="cta row center"><button type="button" class="btn primary" data-act="spot-plan">Plan this evening here</button><a class="btn white" target="_blank" rel="noopener" href="${esc(directionsUrl(sp))}">${SP.car}Directions</a></div>
+      <div class="two"><div class="col">
+        <section class="card"><p class="eyebrow">${SP.landmark}<span>Where</span></p><div class="map" id="map"><div class="msg">Loading the map…</div></div></section>
+        ${tonight}
+      </div><div class="col">
+        <section class="card"><p class="eyebrow">${catIcon(sp.cat)}<span>About this place</span></p><ul class="facts">${facts.filter(Boolean).map((f) => `<li><span>${f}</span></li>`).join('')}</ul>
+          ${!own && !sp.sample ? `<p class="small muted" data-gap>${esc(G.spotReason(sp))}. From OpenStreetMap.</p>` : ''}${links ? `<div class="row" data-gap>${links}</div>` : ''}</section>
+        <section class="card"><div class="row"><button type="button" class="btn" data-act="share-spot">${SP.share}Share this place</button><span class="sp"></span>
+          ${own ? `<button type="button" class="btn quiet danger" data-act="spot-del">Remove</button>` : saved ? '<span class="small muted">In your spots</span>' : `<button type="button" class="btn" data-act="spot-save">${SP.heart}Save to your spots</button>`}</div></section>
+      </div></div>`;
+  }
+
+  /** Add your own spot: a name, a kind, and a pin. */
+  function addSpotView() {
+    const v = S.view, dr = v.draft, p = place(v.placeId);
+    skyOf(p);
+    const coords = dr.spot.lat != null ? `${dr.spot.lat.toFixed(5)}, ${dr.spot.lon.toFixed(5)}` : '';
+    return `<div class="row top"><button type="button" class="btn quiet back" data-act="close-view">‹ Golden Hour Places</button></div>
+      <header class="screenhead"><h1>Your own spot</h1><p>Somewhere you love to watch the sunset</p></header>
+      <section class="card"><div class="map" id="map"><div class="msg">Loading the map…</div></div>
+        <div class="row" data-gap><button type="button" class="btn" data-act="pin-here">Pin my location</button></div>
+        <div class="form" data-gap>
+          <label class="wide">Name<input id="spotName" maxlength="60" value="${esc(dr.spot.name)}" placeholder="The bench above the lake" autocomplete="off"></label>
+          <label>Kind of place<select id="spotType">${Object.entries(TYPES).map(([k, t]) => `<option value="${k}"${dr.spot.type === k ? ' selected' : ''}>${t}</option>`).join('')}</select></label>
+          <label>Coordinates<input id="coords" value="${esc(coords)}" placeholder="Tap the map, or type 39.7392, -104.9903" autocomplete="off"></label>
+        </div>
+        <div class="cta"><button type="button" class="btn primary" data-act="spot-create"${dr.spot.lat == null ? ' disabled' : ''}>Save spot</button></div></section>`;
+  }
+  const KIND_OF_TYPE = { outdoor: 'Open ground', water: 'Waterside', peak: 'Summit or viewpoint', venue: 'Restaurant or bar' };
+  const TYPE_OF_SPOT = (s) => (s.cat === 'dining' ? 'venue' : s.kind === 'Beach' || s.kind === 'Pier' ? 'water' : s.cat === 'adventurous' || s.kind === 'Viewpoint' ? 'peak' : s.type || 'outdoor');
+  const WALK_OF_SPOT = (s) => (s.cat === 'dining' ? 0 : s.effort === 'high' ? 45 : s.effort === 'medium' ? 20 : 5);
+
+  // ---------- Sharing: today's sunset, a place, the app ----------
+  const appUrl = () => location.origin + location.pathname;
+  async function shareOut(o) {
+    try {
+      if (o.file && navigator.canShare && navigator.canShare({ files: [o.file] })) { await navigator.share({ files: [o.file], title: o.title, text: `${o.text}\n${o.url}` }); return; }
+      if (navigator.share) { await navigator.share({ title: o.title, text: o.text, url: o.url }); return; }
+    } catch (e) { if (e && e.name === 'AbortError') return; }
+    try { await navigator.clipboard.writeText(`${o.text}\n${o.url}`); toast('Copied to share'); } catch { window.prompt('Copy and share', `${o.text}\n${o.url}`); }
+  }
+  /** Today's sunset as a picture: the evening's sky, the score, and the times, ready for a message. */
+  async function sunsetCard(p, ev) {
+    const r = ev.rating, W = 1080, H = 1350, c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    const g = c.getContext('2d'), stops = skyStops(r), grad = g.createLinearGradient(0, 0, 0, H);
+    [0, 0.46, 0.72, 0.9, 1].forEach((o, i) => grad.addColorStop(o, stops[i]));
+    g.fillStyle = grad; g.fillRect(0, 0, W, H);
+    if (r && !r.cap) { const rg = g.createRadialGradient(W / 2, H * 0.96, 0, W / 2, H * 0.96, 420); rg.addColorStop(0, 'rgba(255,240,200,.9)'); rg.addColorStop(0.25, 'rgba(255,214,150,.5)'); rg.addColorStop(1, 'rgba(255,190,120,0)'); g.fillStyle = rg; g.fillRect(0, 0, W, H); }
+    try { await document.fonts.load('200 100px Inter'); await document.fonts.load('600 40px Inter'); } catch { /* system font */ }
+    const font = (w, s) => `${w} ${s}px Inter, -apple-system, system-ui, sans-serif`;
+    g.textAlign = 'center'; g.fillStyle = '#fff'; g.shadowColor = 'rgba(0,0,0,.25)'; g.shadowBlur = 16;
+    g.font = font(500, 40); g.globalAlpha = 0.9; g.fillText(`${evLabel(ev, p, evenings(p)).toUpperCase()} · ${dayName(ev.date, true).toUpperCase()}, ${dateText(ev.date).toUpperCase()}`, W / 2, 170);
+    g.globalAlpha = 1; g.font = font(400, 92); g.fillText(p.name, W / 2, 290);
+    if (r) {
+      g.font = font(200, 330); g.fillText(scoreText(r), W / 2 - 50, 640);
+      g.font = font(300, 96); g.globalAlpha = 0.75; g.textAlign = 'left'; g.fillText('/ 5', W / 2 + 190, 640); g.globalAlpha = 1; g.textAlign = 'center';
+      // Five stars, filled to the score.
+      const star = (cx, cy, rad) => { g.beginPath(); for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5, rr = i % 2 ? rad * 0.45 : rad; g.lineTo(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr); } g.closePath(); };
+      const val = r.tier === 'outlook' ? r.shown : r.score;
+      for (let i = 0; i < 5; i++) {
+        const cx = W / 2 + (i - 2) * 92, cy = 730;
+        g.shadowBlur = 0; star(cx, cy, 36); g.fillStyle = 'rgba(255,255,255,.22)'; g.fill();
+        const f = Math.max(0, Math.min(1, val - i));
+        if (f > 0) { g.save(); g.beginPath(); g.rect(cx - 36, cy - 40, 72 * f, 80); g.clip(); star(cx, cy, 36); g.fillStyle = '#F4B860'; g.fill(); g.restore(); }
+      }
+      g.shadowBlur = 16; g.fillStyle = '#FFE3B5'; g.font = font(600, 64); g.fillText(`${r.colourClass} colour · ${r.colour}`, W / 2, 870);
+      g.fillStyle = '#fff'; g.font = font(500, 54); g.fillText(r.verdict === 'go' ? 'Go' : r.verdict === 'maybe' ? 'Maybe' : 'Skip', W / 2, 950);
+    }
+    if (ev.times.sunset != null) { g.font = font(500, 46); g.globalAlpha = 0.95; g.fillText(`Sunset ${timeText(ev.times.sunset, p.tz)} · best light ${timeText(ev.times.bestStart, p.tz)}`, W / 2, 1060); }
+    g.globalAlpha = 0.9; g.font = font(600, 40); g.fillText('Golden Hour', W / 2, H - 120); g.font = font(400, 32); g.fillText(appUrl().replace(/^https?:\/\//, '').replace(/\/$/, ''), W / 2, H - 70);
+    const blob = await new Promise((res) => c.toBlob(res, 'image/png'));
+    return blob ? new File([blob], `golden-hour-${p.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.png`, { type: 'image/png' }) : null;
+  }
+  const locationLink = (p) => `${appUrl()}#l=${encodeURIComponent([p.name, p.lat.toFixed(4), p.lon.toFixed(4), p.tz || ''].join('~'))}`;
+  async function shareToday(p) {
+    const ev = shownEvening(p), r = ev.rating, label = evLabel(ev, p, evenings(p));
+    const line = r ? `${label}'s sunset in ${p.name}: ${scoreText(r)}/5, ${r.colourClass.toLowerCase()} colour. ${r.verdict === 'go' ? 'Worth going out for.' : r.verdict === 'maybe' ? 'Could be good.' : 'One to skip.'}` : `${label}'s sunset in ${p.name}.`;
+    const times = ev.times.sunset != null ? ` Sunset ${timeText(ev.times.sunset, p.tz)}, best light from ${timeText(ev.times.bestStart, p.tz)}.` : '';
+    // The picture is made ahead of time (see prepareCard): a phone only lets the share sheet open straight from
+    // the tap, so there is no time to draw it then.
+    const file = cardCache.key === cardKey(p, ev) ? cardCache.file : null;
+    await shareOut({ title: 'Golden Hour', text: `${line}${times} From Golden Hour.`, url: locationLink(p), file });
+    if (!file) prepareCard(p);
+  }
+  const cardCache = { key: null, file: null };
+  const cardKey = (p, ev) => `${p.id}|${ev.date}|${ev.rating ? ev.rating.score : ''}|${settings.imperialFirst}`;
+  let cardTimer = 0;
+  /** Draws the share picture for the place on screen, a moment after it settles. */
+  function prepareCard(p) {
+    clearTimeout(cardTimer);
+    cardTimer = setTimeout(async () => {
+      const ev = shownEvening(p), key = cardKey(p, ev);
+      if (cardCache.key === key) return;
+      try { const file = await sunsetCard(p, ev); cardCache.key = key; cardCache.file = file; } catch { /* text only */ }
+    }, 600);
+  }
+  async function shareSpot(sp, p) {
+    const url = `${appUrl()}#s=${G.encodeSpot(sp)}`, ev = shownEvening(p), r = ev.rating;
+    const tonight = r && G.distance(p.lat, p.lon, sp.lat, sp.lon) < 30000 ? ` Tonight's sunset there: ${scoreText(r)}/5, at ${timeText(ev.times.sunset, p.tz)}.` : '';
+    await shareOut({ title: sp.name, text: `${sp.name}: a great place to watch the sunset${p ? ` near ${p.name}` : ''}.${tonight} Found with Golden Hour.`, url });
+  }
+  const shareApp = () => shareOut({ title: 'Golden Hour', text: 'Golden Hour: which evenings are worth it for the sunset, where to watch from, and a plan to share. Free, no account.', url: appUrl() });
+
   // ---------- Plan actions ----------
   function newDraft(date) {
     const p = place();
@@ -987,7 +1299,7 @@
     if (!dr || !$('#spotName')) return;
     dr.spot.name = $('#spotName').value.trim().slice(0, 60);
     dr.spot.type = $('#spotType').value;
-    dr.walkIn = Math.max(0, Math.min(240, Math.round(Number($('#walkIn').value) || 0)));
+    if ($('#walkIn')) dr.walkIn = Math.max(0, Math.min(240, Math.round(Number($('#walkIn').value) || 0)));
   }
   function toPlan(dr) {
     const mo = planModel(dr);
@@ -1128,6 +1440,47 @@
     units(el) { settings.imperialFirst = el.dataset.v === 'imperial'; store.set('imperialFirst', settings.imperialFirst); keepFields(); render(); },
     search() {},
     goto(el) { goTo(el.dataset.id, !S.view); },
+    'share-today'() { shareToday(place()); },
+    'share-app'() { shareApp(); },
+    'share-spot'() { shareSpot(S.view.spot, place(S.view.placeId) || place()); },
+    'spots-all'(el) { S.view = { type: 'spots', placeId: el.dataset.place || S.current, expanded: {} }; render(); },
+    'spots-more'(el) { S.view.expanded[el.dataset.k] = !S.view.expanded[el.dataset.k]; render(); },
+    async 'spots-retry'() { const p = place(S.view && S.view.placeId); DATA[p.id].spots = null; update(p); await loadSpots(p); update(p); if (S.view) render(); },
+    'spot-open'(el) {
+      const p = place(el.dataset.place), sp = findSpot(p, el.dataset.id);
+      if (!sp) return;
+      S.view = { type: 'spot', spot: sp, placeId: p.id, from: S.view && S.view.type === 'spots' ? 'all' : 'page', back: S.view };
+      render();
+    },
+    'spot-plan'() {
+      const v = S.view, sp = v.spot, p = place(v.placeId) || place(), ev = shownEvening(p);
+      S.current = p.id;
+      const dr = newDraft(ev.date);
+      dr.spot = { name: sp.name, type: TYPE_OF_SPOT(sp), lat: sp.lat, lon: sp.lon };
+      dr.walkIn = WALK_OF_SPOT(sp);
+      S.view = { type: 'plan', draft: dr };
+      render();
+    },
+    async 'spot-save'() {
+      const sp = S.view.spot, own = { id: 'own-' + now().toString(36), name: sp.name, cat: 'own', kind: sp.kind || 'Your spot', type: TYPE_OF_SPOT(sp), lat: sp.lat, lon: sp.lon, ele: sp.ele == null ? null : sp.ele, createdAt: now() };
+      if (db.isBlocked()) return toast('Spots can’t be saved in this browser mode');
+      S.spots.push(own); await db.put('spots', own); render(); toast('Saved to your spots');
+    },
+    async 'spot-del'() {
+      if (!window.confirm('Remove this spot?')) return;
+      const id = S.view.spot.id; S.spots = S.spots.filter((x) => x.id !== id); await db.del('spots', id);
+      S.view = { type: 'spots', placeId: S.view.placeId, expanded: {} }; render();
+    },
+    'spot-add'(el) { S.view = { type: 'addspot', placeId: el.dataset.place || S.current, draft: { spot: { name: '', type: 'outdoor', lat: null, lon: null } } }; render(); },
+    async 'spot-create'() {
+      keepFields();
+      const v = S.view, sp = v.draft.spot;
+      if (sp.lat == null) return toast('Drop a pin first');
+      if (db.isBlocked()) return toast('Spots can’t be saved in this browser mode');
+      const own = { id: 'own-' + now().toString(36), name: sp.name || 'My sunset spot', cat: 'own', kind: KIND_OF_TYPE[sp.type] || 'Your spot', type: sp.type, lat: sp.lat, lon: sp.lon, createdAt: now() };
+      S.spots.push(own); await db.put('spots', own);
+      S.view = { type: 'spots', placeId: v.placeId, expanded: {} }; render(); toast('Spot saved');
+    },
     'open-list'() { S.view = { type: 'list' }; S.results = null; render(); loadAll(); },
     'open-plans'() { S.view = { type: 'plans' }; render(); },
     'add-place'() { S.view = { type: 'list' }; S.results = null; S.focusSearch = true; render(); },
@@ -1154,7 +1507,7 @@
     },
     log() { S.view = { type: 'log' }; render(); },
     async 'copy-log'() { try { await navigator.clipboard.writeText(JSON.stringify(S.ratings, null, 1)); toast('Log copied'); } catch { toast('Couldn’t copy'); } },
-    'close-view'() { keepFields(); autosave(); const v = S.view; S.view = v && v.type === 'plan' && v.draft.saved ? { type: 'plans' } : null; S.editing = false; render(); },
+    'close-view'() { keepFields(); autosave(); const v = S.view; S.view = v && v.type === 'plan' && v.draft.saved ? { type: 'plans' } : v && v.type === 'spot' && v.back ? v.back : v && v.type === 'addspot' ? { type: 'spots', placeId: v.placeId, expanded: {} } : null; S.editing = false; render(); },
     'plan-new'(el) { S.view = { type: 'plan', draft: newDraft(el.dataset.date) }; render(); },
     'plan-open'(el) { openPlan(el.dataset.id); },
     'plan-save'() { savePlan(); },
@@ -1265,13 +1618,26 @@
     await db.ready;
     if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
     if (location.hash.startsWith('#p=')) return openShared(location.hash);
-    const [places, plans, ratings, cached] = await Promise.all([db.all('places'), db.all('plans'), db.all('ratings'), db.all('cache')]);
-    for (const c of cached || []) if (now() - c.fetchedAt > 3 * DAY) db.del('cache', c.url);
+    const incoming = location.hash;
+    if (/^#[ls]=/.test(incoming)) history.replaceState(null, '', location.pathname + location.search);
+    const [places, plans, ratings, cached, spots] = await Promise.all([db.all('places'), db.all('plans'), db.all('ratings'), db.all('cache'), db.all('spots')]);
+    S.spots = spots || [];
+    for (const c of cached || []) if (now() - c.fetchedAt > (/overpass/.test(c.url) ? 15 : 3) * DAY) db.del('cache', c.url);
     S.places = (places || []).filter((p) => !p.sample);
     if (!S.places.length) S.places = [SAMPLE];
     S.plans = plans || []; S.ratings = ratings || [];
     S.current = store.get('current', null);
     if (!S.places.some((p) => p.id === S.current)) S.current = S.places[0].id;
+    if (incoming.startsWith('#l=')) {
+      const [name, lat, lon, tz] = decodeURIComponent(incoming.slice(3)).split('~');
+      if (name && Number.isFinite(+lat) && Number.isFinite(+lon) && Math.abs(+lat) <= 90 && Math.abs(+lon) <= 180) { await addPlace({ name: name.slice(0, 60), region: '', lat: +lat, lon: +lon, tz }); toast(`${name.slice(0, 60)} added. Swipe for your other locations.`); return; }
+    }
+    if (incoming.startsWith('#s=')) {
+      const sp = G.decodeSpot(incoming.slice(3));
+      if (sp) { const near = S.places.slice().sort((a, b) => G.distance(a.lat, a.lon, sp.lat, sp.lon) - G.distance(b.lat, b.lon, sp.lat, sp.lon))[0];
+        if (near) S.current = near.id;
+        S.view = { type: 'spot', spot: { ...sp, id: 'shared/' + sp.lat + ',' + sp.lon }, placeId: S.current, shared: true }; }
+    }
     const p = place();
     if (p.sample) await load(p);
     render();
@@ -1280,6 +1646,6 @@
     for (const q of S.places) if (q !== p && Math.abs(S.places.indexOf(q) - S.places.indexOf(p)) === 1) load(q).then(() => update(q));   // the pages either side, ready to swipe to
   }
   window.addEventListener('hashchange', () => { if (location.hash.startsWith('#p=')) openShared(location.hash); });
-  window.__gh = { S, DATA, settings, render, db };   // read by tests/web.test.js
+  window.__gh = { S, DATA, settings, render, db, card: () => sunsetCard(place(), shownEvening(place())) };   // read by tests/web.test.js
   start();
 })();
