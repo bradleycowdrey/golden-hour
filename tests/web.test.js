@@ -92,22 +92,24 @@ const server = http.createServer((req, res) => {
     page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource|net::ERR/.test(m.text())) problems.push(m.text()); });
     page.on('pageerror', (e) => problems.push(String(e)));
     await page.goto(BASE + (o.hash || ''));
-    await page.waitForSelector('#view > *');
+    await page.waitForSelector('#view .hero, #view .card');
     return { page, context };
   }
   const shot = async (page, name) => { if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); await page.screenshot({ path: path.join(SHOTS, name + '.png'), fullPage: true }); } };
   const text = (page, sel) => page.locator(sel).first().innerText();
+  const CUR = '.page[aria-current="true"] ';
   async function addPlace(page, q) {
-    if (!(await page.locator('#q').isVisible().catch(() => false))) await page.click('[data-act="search"]');
+    if (!(await page.locator('#q').isVisible().catch(() => false))) await page.click('#bar [data-act="open-list"]');
     await page.fill('#q', q);
+    await page.waitForSelector('.result');
     const name = (await page.locator('.result .n').first().innerText()).trim();
     await page.click('.result');
-    await page.waitForFunction((n) => { const h = document.querySelector('.hero h2'); return h && h.textContent === n && !document.querySelector('.chip[aria-current] .tag') && document.querySelector('.hero .score, .hero .none'); }, name);
+    await page.waitForFunction((n) => { const h = document.querySelector('.page[aria-current="true"] .hero h2'); return h && h.textContent.trim() === n && document.querySelector('.page[aria-current="true"] .hero .score, .page[aria-current="true"] .hero .none'); }, name);
   }
   /** Checks that hold on every screen: nothing scrolls sideways, no text under 13px, buttons big enough. */
   async function layout(page, what) {
     const r = await page.evaluate(() => {
-      const out = { wide: document.documentElement.scrollWidth - window.innerWidth, small: [], targets: [] };
+      const out = { wide: Math.max(document.documentElement.scrollWidth - window.innerWidth, ...Array.from(document.querySelectorAll('.page[aria-current], .screen')).map((e) => e.scrollWidth - e.clientWidth)), small: [], targets: [] };
       const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
       for (let n = walker.nextNode(); n; n = walker.nextNode()) {
         const el = n.parentElement;
@@ -138,13 +140,14 @@ const server = http.createServer((req, res) => {
       const lum = (c) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]); };
       let worst = { ratio: 99, text: '' };
       const walker = document.createTreeWalker(document.querySelector('.app'), NodeFilter.SHOW_TEXT);
+      const view = document.querySelector('.page[aria-current], .screen');
       for (let n = walker.nextNode(); n; n = walker.nextNode()) {
         const el = n.parentElement;
-        if (!n.textContent.trim() || !el.getClientRects().length || el.closest('.maplibregl-map, [hidden]')) continue;
+        if (!n.textContent.trim() || !el.getClientRects().length || el.closest('.maplibregl-map, [hidden], .page:not([aria-current])')) continue;
         const box = el.getBoundingClientRect();
         // The worst case for this text: the lightest sky it can sit over, which is the bottom of the window.
-        let bg = skyAt(Math.min(1, Math.max(0, box.bottom / window.innerHeight)));
-        if (el.closest('.card, .notice, .warn, .verdict, .banner')) bg = skyAt(1);
+        let bg = skyAt(Math.min(1, Math.max(0, (box.bottom + (view ? view.scrollTop : 0)) / window.innerHeight)));   // where it sits before any scrolling
+        if (el.closest('.card, .notice, .warn, .verdict, .banner, .bar, .colour')) bg = skyAt(1);
         const chain = [];
         for (let e = el; e && e !== document.body; e = e.parentElement) chain.unshift(e);
         for (const e of chain) { const b = rgba(getComputedStyle(e).backgroundColor); if (b.a > 0) bg = over(b.c, b.a, bg); }
@@ -162,12 +165,17 @@ const server = http.createServer((req, res) => {
   // ---------- 1. First run ----------
   {
     const { page, context } = await open();
-    check((await text(page, '#places')).includes('Sample'), 'first run: a sample city, labelled Sample');
-    check(await page.locator('.hero .score .n').isVisible(), 'first run: the sample evening shows a score');
-    check(await page.locator('#q').isVisible() && await page.locator('[data-act="locate"]').isVisible(), 'first run: search and Use my location are both offered');
+    check((await text(page, CUR + '.hero h2')).includes('Sample'), 'first run: a sample city, labelled Sample');
+    check(await page.locator(CUR + '.hero .score .n').isVisible(), 'first run: the sample evening shows a score');
     check(net.calls.length === 0, 'first run: nothing is fetched until a place is chosen');
+    check(await page.locator('#bar .dot').count() === 1 && await page.locator('#bar [data-act="open-plans"]').isVisible() && await page.locator('#bar [data-act="open-list"]').isVisible(), 'the bottom bar: Plans, a dot for each place, and Places');
     await layout(page, 'first run (phone)'); await contrast(page, 'first run');
     await shot(page, 'phone-first-run');
+    await page.click(CUR + '[data-act="add-place"]');
+    check(await page.locator('#q').isVisible() && await page.locator('[data-act="locate"]').isVisible(), 'first run: Add a place opens search and Use my location');
+    check(await page.evaluate(() => document.activeElement && document.activeElement.id === 'q'), 'and puts the cursor in the search box');
+    await layout(page, 'places list (phone)'); await contrast(page, 'places list');
+    await shot(page, 'phone-places-first-run');
     await page.click('[data-act="locate"]');
     await page.waitForSelector('#toast:not([hidden])');
     check((await text(page, '#toast')).includes('Search for a place instead'), 'location refused: “Search for a place instead”, and nothing else changes');
@@ -183,31 +191,34 @@ const server = http.createServer((req, res) => {
     await page.waitForFunction(() => window.__gh.S.places[0].normals);
     await page.waitForTimeout(100);
     const exp = expectedDenver(0), r = exp.rating;
-    check(!(await text(page, '#places')).includes('Sample'), 'adding a place replaces the sample');
-    check(await text(page, '.hero .score .n') === r.score.toFixed(1), `the score on screen is the core’s for the same forecast (${r.score.toFixed(1)})`);
-    check((await text(page, '.verdict')).startsWith(r.verdictWord) && await page.locator('.verdict svg').count() === 1, 'the verdict has a word and an icon, not just a colour');
-    check((await text(page, '.hero .range')).includes(`likely ${r.lo.toFixed(1)} to ${r.hi.toFixed(1)}`), 'the range is shown, labelled typical');
-    check(await text(page, '.hero .reason') === r.reason, 'the reason sentence');
-    check((await text(page, '.hero .colour')).replace(/\s+/g, ' ') === `COLOUR ${r.colourClass} ${r.colour}`, `the colour class leads, after the stars (${r.colourClass}, ${r.colour})`);
-    const label = await page.locator('.hero').getAttribute('aria-label');
+    check(await page.locator('.page').count() === 1 && !(await text(page, CUR + '.hero h2')).includes('Sample'), 'adding a place replaces the sample');
+    check(await text(page, CUR + '.hero .score .n') === r.score.toFixed(1), `the score on screen is the core’s for the same forecast (${r.score.toFixed(1)})`);
+    check((await text(page, CUR + '.verdict')).startsWith(r.verdictWord) && await page.locator(CUR + '.verdict svg').count() === 1, 'the verdict has a word and an icon, not just a colour');
+    check((await text(page, CUR + '.hero .range')).includes(`likely ${r.lo.toFixed(1)} to ${r.hi.toFixed(1)}`), 'the range is shown, labelled typical');
+    check(await text(page, CUR + '.hero .reason') === r.reason, 'the reason sentence');
+    check((await text(page, CUR + '.hero .colour')).replace(/\s+/g, ' ') === `COLOUR ${r.colourClass} ${r.colour}`, `the colour class leads, after the stars (${r.colourClass}, ${r.colour})`);
+    const label = await page.locator(CUR + '.hero').getAttribute('aria-label');
     check(label === `Tonight. ${r.score.toFixed(1)} out of 5 stars, likely ${r.lo.toFixed(1)} to ${r.hi.toFixed(1)}. ${r.colourClass} colour, ${r.colour} out of 100. ${r.verdictWord}${r.qualifier ? ', ' + r.qualifier : ''}. ${r.reason}`, 'screen readers get one sentence; the stars are hidden from them');
-    check(await page.locator('.hero .stars').getAttribute('aria-hidden') === 'true', 'star glyphs are hidden from assistive technology');
-    const fill = await page.locator('.hero .stars .fill').evaluate((el) => el.getBoundingClientRect().width / el.parentElement.getBoundingClientRect().width);
+    check(await page.locator(CUR + '.hero .stars').getAttribute('aria-hidden') === 'true', 'star glyphs are hidden from assistive technology');
+    const fill = await page.locator(CUR + '.hero .stars .fill').evaluate((el) => el.getBoundingClientRect().width / el.parentElement.getBoundingClientRect().width);
     check(Math.abs(fill - r.score / 5) < 0.01, 'stars are filled in proportion to the score');
-    const strip = await text(page, '.times');
+    const strip = await text(page, CUR + '.times');
     const fmt = (ms) => new Intl.DateTimeFormat('en-US', { timeZone: 'America/Denver', hour: 'numeric', minute: '2-digit' }).format(ms).replace(/ /g, ' ').toLowerCase();
     check(['goldenStart', 'bestStart', 'sunset', 'afterglowEnd', 'lastLight'].every((k) => strip.includes(fmt(exp.times[k]))), 'the five times match the sun’s position to the minute');
-    await page.click('details.parts summary');
-    const partsText = await text(page, 'details.parts');
+    await page.click(CUR + 'details.parts summary');
+    const partsText = await text(page, CUR + 'details.parts');
     check(/Colour/.test(partsText) && /Seeing the sun set/.test(partsText) && /Air clarity/.test(partsText) && /Comfort/.test(partsText), 'tapping opens the four parts');
     check(/\d+ mph · \d+ km\/h/.test(partsText) && /\d+°F · \d+°C/.test(partsText), 'the parts show their inputs in both units');
     check(/usual \d+°F/.test(partsText), 'comfort compares with the usual evening temperature here');
     await shot(page, 'phone-tonight');
     await layout(page, 'tonight (phone)'); await contrast(page, 'tonight');
-    await page.click('#unitsMetric');
-    check(/\d+ km\/h · \d+ mph/.test(await text(page, 'details.parts').catch(() => '')) || (await page.click('details.parts summary'), /\d+ km\/h · \d+ mph/.test(await text(page, 'details.parts'))), 'the units switch changes which is listed first');
+    await page.click('#bar [data-act="open-list"]');
+    await page.click('.seg [data-v="metric"]');
+    await page.click('[data-act="close-view"]');
+    await page.click(CUR + 'details.parts summary');
+    check(/\d+ km\/h · \d+ mph/.test(await text(page, CUR + 'details.parts')), 'the units switch, in Places, changes which is listed first');
     check(await page.evaluate(() => JSON.parse(localStorage.getItem('gh.imperialFirst'))) === false, 'and is remembered');
-    await page.click('#unitsImperial');
+    await page.click('#bar [data-act="open-list"]'); await page.click('.seg [data-v="imperial"]'); await page.click('[data-act="close-view"]');
     const p0 = net.calls.find((u) => u.includes('//api.open-meteo.com') && !/latitude=[^&]*(,|%2C)/.test(u));
     check(!!p0 && /forecast_days=8/.test(p0) && /past_days=1/.test(p0) && /timeformat=unixtime/.test(p0) && /timezone=GMT/.test(p0) && /wind_speed_unit=ms/.test(p0), 'the forecast request asks for 8 days, 1 past day, GMT, unix time and metres per second');
     const up = net.calls.find((u) => u.includes('//api.open-meteo.com') && /latitude=[^&]*(,|%2C)/.test(u));
@@ -234,34 +245,67 @@ const server = http.createServer((req, res) => {
     return open({ context, time: o && o.time, hash: o && o.hash });
   };
 
-  // ---------- 3. Week and Compare ----------
+  // ---------- 3. The ten evenings, swiping between places, and Compare ----------
   {
     const { page, context } = await withDenver();
-    await page.waitForSelector('.hero .score');
-    await page.click('#tabWeek');
-    const rows = page.locator('.day');
-    check(await rows.count() === 10, 'week: ten evenings');
-    check(await page.locator('button.day').count() === 6, 'week: six are rated');
+    await page.waitForSelector(CUR + '.hero .score');
+    const rows = page.locator(CUR + '.day');
+    check(await rows.count() === 10, 'each place’s page lists ten evenings');
+    check(await page.locator(CUR + 'button.day').count() === 6, 'six are rated');
     const outlook = await rows.nth(4).innerText();
-    check(/likely \d\.\d to \d\.\d/.test(outlook) && await rows.nth(4).locator('.stars.outlook').count() === 1 && /\d\.[05]\b/.test(await rows.nth(4).locator('.sc').innerText()), 'week: outlook rows use hollow half stars and a range');
-    check((await rows.nth(7).innerText()).includes('Too early to call') && /Sunset \d/.test(await rows.nth(7).innerText()), 'week: later rows show the sunset time and “Too early to call”');
-    check(await page.locator('.best').count() <= 1, 'week: at most one best evening');
+    check(/likely \d\.\d to \d\.\d/.test(outlook) && await rows.nth(4).locator('.stars.outlook').count() === 1 && /\d\.[05]\b/.test(await rows.nth(4).locator('.sc').innerText()), 'outlook rows use hollow half stars and a range');
+    check((await rows.nth(7).innerText()).includes('Too early to call') && /Sunset \d/.test(await rows.nth(7).innerText()), 'later rows show the sunset time and “Too early to call”');
+    check(await page.locator(CUR + '.best').count() <= 1, 'at most one best evening');
     const exp = [0, 1, 2].map((d) => expectedDenver(d).rating).filter((r) => r.verdict === 'go').sort((a, b) => b.score - a.score)[0];
-    check(!exp || (await page.locator('.day:has(.best) .sc').innerText()) === exp.score.toFixed(1), 'week: the best evening is the highest Go among tonight and the next two');
+    check(!exp || (await page.locator(CUR + '.day:has(.best) .sc').innerText()) === exp.score.toFixed(1), 'the best evening is the highest Go among tonight and the next two');
+    await page.locator(CUR + '.week').scrollIntoViewIfNeeded();
     await shot(page, 'phone-week');
-    await layout(page, 'week (phone)'); await contrast(page, 'week');
+    await layout(page, 'place page (phone)'); await contrast(page, 'place page');
     await rows.nth(1).click();
-    check((await text(page, '.hero .when')).startsWith('TOMORROW') && await page.locator('[data-act="plan-new"]').isVisible(), 'week: tapping a row opens that evening, with Plan this evening');
-    check(await page.locator('.back').isVisible(), 'and a way back to tonight');
+    await page.waitForFunction(() => /TOMORROW/i.test(document.querySelector('.page[aria-current="true"] .hero .when').textContent));
+    check(await page.locator(CUR + '[data-act="plan-new"]').isVisible(), 'tapping an evening shows it at the top, with Plan this evening');
+    check(await page.locator(CUR).evaluate((el) => el.scrollTop) === 0 && await page.locator(CUR + '.back').isVisible(), 'the page returns to the top, with a way back to tonight');
+
+    // A second place: its own page, swiped to.
     await addPlace(page, 'Bould');
-    await page.click('#tabWeek');
+    check(await page.locator('.page').count() === 2 && await page.locator('#bar .dot').count() === 2, 'a second place gets its own page and its own dot');
+    check((await text(page, CUR + '.hero h2')) === 'Boulder' && await page.locator('#bar .dot[aria-current="true"]').getAttribute('aria-label') === 'Boulder', 'adding a place opens its page');
+    const snap = await page.evaluate(() => getComputedStyle(document.getElementById('pager')).scrollSnapType);
+    check(/x mandatory/.test(snap), 'pages snap, one place to a screen');
+    await page.evaluate(() => document.getElementById('pager').scrollTo({ left: 0 }));
+    await page.waitForFunction(() => document.querySelector('.page[aria-current="true"] .hero h2').textContent.trim() === 'Denver');
+    check(await page.locator('#bar .dot[aria-current="true"]').getAttribute('aria-label') === 'Denver', 'swiping moves to the next place, and the dots follow');
+    check(await page.evaluate(() => localStorage.getItem('gh.current')) === '"39.74,-104.99"', 'the place you were on is remembered');
+    check(await page.locator('.page:not([aria-current])').evaluate((el) => el.inert), 'the page that is off screen can’t be tabbed into');
+    await page.keyboard.press('ArrowRight');
+    await page.waitForFunction(() => document.querySelector('.page[aria-current="true"] .hero h2').textContent.trim() === 'Boulder');
+    check(true, 'the arrow keys move between places');
+    await page.locator('#bar .dot').first().click();
+    await page.waitForFunction(() => document.querySelector('.page[aria-current="true"] .hero h2').textContent.trim() === 'Denver');
+    check(true, 'tapping a dot opens that place');
+    const widths = await page.evaluate(() => Array.from(document.querySelectorAll('.page')).map((p) => p.getBoundingClientRect().width === window.innerWidth));
+    check(widths.every(Boolean), 'every page is the full width of the screen');
+    await page.waitForTimeout(700);
+    await shot(page, 'phone-two-places');
+
+    // The list of places, and Compare.
+    await page.click('#bar [data-act="open-list"]');
+    await page.waitForFunction(() => document.querySelectorAll('.lrow .big').length === 2);
+    const row = await text(page, '.lrow');
+    check(/Denver/.test(row) && /sunset \d/.test(row) && await page.locator('.lrow .swatch').count() === 2, 'the list shows each place with tonight’s score, its sunset and a swatch of its sky');
+    await shot(page, 'phone-places');
+    await layout(page, 'places (phone)'); await contrast(page, 'places');
     await page.click('[data-act="compare"]');
     await page.waitForFunction(() => document.querySelectorAll('table.cmp td button').length === 12);
     check(await page.locator('table.cmp tr').count() === 3, 'compare: one row per saved place');
     await shot(page, 'phone-compare');
     await layout(page, 'compare (phone)');
     await page.locator('table.cmp tr').nth(1).locator('td button').nth(2).click();
-    check((await text(page, '.hero h2')) === 'Denver' && /MONDAY/.test(await text(page, '.hero .when')), 'compare: a cell opens that place and evening');
+    await page.waitForSelector(CUR + '.hero');
+    check((await text(page, CUR + '.hero h2')) === 'Denver' && /MONDAY/.test(await text(page, CUR + '.hero .when')), 'compare: a cell opens that place and evening');
+    await page.click('#bar [data-act="open-list"]');
+    await page.locator('.lrow').nth(1).click();
+    check((await text(page, CUR + '.hero h2')) === 'Boulder', 'the list: tapping a place opens its page');
     await context.close();
   }
 
@@ -269,8 +313,8 @@ const server = http.createServer((req, res) => {
   let shareLink = '';
   {
     const { page, context } = await withDenver();
-    await page.waitForSelector('.hero .score');
-    await page.click('[data-act="plan-new"]');
+    await page.waitForSelector(CUR + '.hero .score');
+    await page.click(CUR + '[data-act="plan-new"]');
     await page.waitForSelector('.maplibregl-canvas', { timeout: 20000 }).catch(() => {});
     const hasMap = await page.locator('.maplibregl-canvas').count() === 1;
     check(hasMap, 'plan: the map loads from this site’s own copy of MapLibre, under the content security policy');
@@ -336,7 +380,7 @@ const server = http.createServer((req, res) => {
     void stamp;
 
     // Saved, reloaded, offline
-    await page.click('#tabPlans');
+    await page.click('[data-act="close-view"]');
     check((await text(page, '.plan-row')).includes('Lookout') && (await text(page, '.plan-row')).includes('meet at'), 'plans: the saved plan is listed');
     await shot(page, 'phone-plans');
     await layout(page, 'plans (phone)');
@@ -347,9 +391,9 @@ const server = http.createServer((req, res) => {
     await page2.clock.setFixedTime(new Date(NOON + 45 * MIN));
     await context.setOffline(false);            // the test server stands in for the offline app shell (the service worker is tested below)
     await page2.goto(BASE);
-    await page2.waitForSelector('#view > *');
+    await page2.waitForSelector('#view .hero');
     await context.setOffline(true);
-    await page2.click('#tabPlans');
+    await page2.click('#bar [data-act="open-plans"]');
     await page2.click('.plan-row');
     await page2.waitForSelector('.timeline');
     check((await text(page2, '.timeline')).includes(fmt(pt.meetAt)), 'offline: a saved plan opens in full');
@@ -357,8 +401,9 @@ const server = http.createServer((req, res) => {
     check(hasMap ? await page2.locator('#map img, .map img').count() === 1 : true, 'offline: the plan shows its saved map picture');
     await shot(page2, 'phone-plan-offline');
     await page2.click('[data-act="close-view"]');
-    await page2.click('#tabTonight');
-    check(await page2.locator('.hero .score .n').isVisible() && (await text(page2, '#banner')).includes('Offline. Forecast updated'), 'offline: the cached forecast shows, with its age');
+    check(await page2.locator('.plan-row').count() === 1, 'back from a saved plan returns to the list of plans');
+    await page2.click('[data-act="close-view"]');
+    check(await page2.locator(CUR + '.hero .score .n').isVisible() && (await text(page2, '#banner')).includes('Offline. Forecast updated'), 'offline: the cached forecast shows, with its age');
     await context.setOffline(false); net.forecast = 'ok'; net.tiles = 'ok';
     await context.close();
   }
@@ -372,7 +417,7 @@ const server = http.createServer((req, res) => {
     const bring = await text(page, '.group');
     check(bring.includes('SAM') && bring.includes('Camera'), 'shared: the whole bring list, grouped by name');
     check((await text(page, '#view')).includes('Plan as of') && await page.locator('[data-act="calendar"]').isVisible() && await page.locator('a:has-text("Directions")').isVisible(), 'shared: “Plan as of”, Add to calendar and Directions');
-    check(await page.locator('#tabs').isHidden() && await page.locator('#places').isHidden(), 'shared: read-only, with none of the app’s own places');
+    check(await page.locator('#bar').isHidden() && await page.locator('.pager').count() === 0, 'shared: read-only, with none of the app’s own places');
     await page.waitForSelector('.card .stars', { timeout: 5000 }).catch(() => {});
     check(await page.locator('.card .stars').count() === 1, 'shared: the live score for the spot when online');
     await shot(page, 'phone-shared');
@@ -389,19 +434,20 @@ const server = http.createServer((req, res) => {
     net.forecast = 'down';
     const a = await open();
     await addPlace(a.page, 'Denv');
-    check((await text(a.page, '.hero')).includes('Couldn’t reach the forecast') && await a.page.locator('[data-act="retry"]').isVisible(), 'forecast failed: says so, with Try again');
+    check((await text(a.page, CUR + '.hero')).includes('Couldn’t reach the forecast') && await a.page.locator(CUR + '[data-act="retry"]').isVisible(), 'forecast failed: says so, with Try again');
     net.forecast = 'ok';
-    await a.page.click('[data-act="retry"]');
-    await a.page.waitForSelector('.hero .score');
+    await a.page.click(CUR + '[data-act="retry"]');
+    await a.page.waitForSelector(CUR + '.hero .score');
     check(true, 'forecast failed: Try again recovers');
     // No sunset: Tromsø in June.
     await addPlace(a.page, 'Trom');
-    check((await text(a.page, '.hero')).includes('No sunset here on this date'), 'midnight sun: “No sunset here on this date”');
-    check(await a.page.locator('[data-act="plan-new"]').count() === 0, 'midnight sun: nothing to plan');
+    check((await text(a.page, CUR + '.hero')).includes('No sunset here on this date'), 'midnight sun: “No sunset here on this date”');
+    check(await a.page.locator(CUR + '[data-act="plan-new"]').count() === 0, 'midnight sun: nothing to plan');
     await a.context.close();
     // Search falls back to the bundled list when the search service is down.
     net.geocode = 'down';
     const b = await open();
+    await b.page.click('#bar [data-act="open-list"]');
     await b.page.fill('#q', 'Reykjav');
     await b.page.waitForSelector('.result');
     check((await text(b.page, '.result')).includes('Reykjav'), 'search works offline, from the bundled list of places');
@@ -412,20 +458,20 @@ const server = http.createServer((req, res) => {
     // After last light: tonight rolls over to tomorrow, and "How was it?" is asked once.
     const exp = expectedDenver(0);
     const first = await withDenver({ time: NOON + 2 * HOUR });          // an afternoon look logs today's forecast
-    await first.page.waitForSelector('.hero .score');
+    await first.page.waitForSelector(CUR + '.hero .score');
     await first.page.waitForTimeout(150);
     state = await first.context.storageState({ indexedDB: true });
     await first.context.close();
     const { page, context } = await withDenver({ time: exp.times.lastLight + 10 * MIN });
     await page.waitForSelector('#howWasIt');
-    check((await text(page, '.hero .when')).startsWith('TOMORROW EVENING'), 'after last light: Tonight shows tomorrow’s evening');
-    check((await text(page, '.hero .range')).startsWith('Forecast'), 'after last light: it keeps the Forecast label and range until midnight');
+    check((await text(page, CUR + '.hero .when')).startsWith('TOMORROW EVENING'), 'after last light: Tonight shows tomorrow’s evening');
+    check((await text(page, CUR + '.hero .range')).startsWith('Forecast'), 'after last light: it keeps the Forecast label and range until midnight');
     check((await text(page, '#howWasIt')).includes(`We forecast ${exp.rating.score.toFixed(1)}`), 'after last light: “How was it?” for today, against what was forecast');
     await shot(page, 'phone-how-was-it');
     await page.click('#howWasIt [data-v="4"]');
     await page.waitForSelector('#toast:not([hidden])');
     check(await page.locator('#howWasIt').count() === 0, '“How was it?” is asked once');
-    await page.click('[data-act="log"]');
+    await page.click(CUR + '[data-act="log"]');
     check((await text(page, '#view')).includes('You said 4 of 5') && (await text(page, '#view')).includes('within one star'), 'the answer is kept in the sunset log, on the device');
     check(!net.calls.some((u) => /github|issues/.test(u)), 'nothing is sent anywhere');
     await layout(page, 'log (phone)');
@@ -435,17 +481,17 @@ const server = http.createServer((req, res) => {
   // ---------- 7. Tablet and desktop ----------
   for (const [name, viewport] of [['tablet', { width: 820, height: 1180 }], ['desktop', { width: 1280, height: 800 }], ['small-phone', { width: 360, height: 640 }]]) {
     const { page, context } = await withDenver({ viewport });
-    await page.waitForSelector('.hero .score');
-    await layout(page, `tonight (${name})`); await contrast(page, `tonight (${name})`);
-    await shot(page, `${name}-tonight`);
+    await page.waitForSelector(CUR + '.hero .score');
+    await layout(page, `place page (${name})`); await contrast(page, `place page (${name})`);
+    await shot(page, `${name}-place`);
     if (name === 'desktop') {
-      const cols = await page.evaluate(() => { const c = document.querySelectorAll('.two > .col'); return c[0].getBoundingClientRect().right <= c[1].getBoundingClientRect().left; });
+      const cols = await page.evaluate(() => { const c = document.querySelectorAll('.page[aria-current="true"] .two > .col'); return c[0].getBoundingClientRect().right <= c[1].getBoundingClientRect().left; });
       check(cols, 'desktop: two columns from 900px');
-      check(parseFloat(await page.locator('.score .n').evaluate((el) => getComputedStyle(el).fontSize)) === 96, 'desktop: the score is 96px');
+      check(parseFloat(await page.locator(CUR + '.score .n').evaluate((el) => getComputedStyle(el).fontSize)) === 96, 'desktop: the score is 96px');
     }
-    await page.click('#tabWeek');
-    await layout(page, `week (${name})`);
-    await shot(page, `${name}-week`);
+    await page.click('#bar [data-act="open-list"]');
+    await layout(page, `places (${name})`);
+    await shot(page, `${name}-places`);
     await context.close();
   }
 
@@ -460,7 +506,7 @@ const server = http.createServer((req, res) => {
     await context.setOffline(true);
     await page.reload();
     await page.waitForSelector('.hero .score');
-    check((await text(page, '#places')).includes('Sample'), 'service worker: the app opens offline');
+    check((await text(page, '.hero h2')).includes('Sample'), 'service worker: the app opens offline');
     await context.close();
   }
 

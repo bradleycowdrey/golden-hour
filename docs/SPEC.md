@@ -1,6 +1,6 @@
 # Golden Hour: plan and spec
 
-Version 8. An app by Bradley Cowdrey, in the same family as Two Degrees, Bearings and Meridian. Items marked **(verify)** come from memory or secondary sources
+Version 9. An app by Bradley Cowdrey, in the same family as Two Degrees, Bearings and Meridian. Items marked **(verify)** come from memory or secondary sources
 and must be checked against primary documentation before they are relied on.
 
 **How to read this.** Sections 1 to 3 and 12 to 15 are the plan: what it is, the order of work, how
@@ -545,25 +545,30 @@ END:VCALENDAR
 
 ### 10.1 Screens
 
-Bottom tab bar on phones; two columns from 900 px wide. Release 1 tabs: **Tonight, Week, Plans**.
-Release 2 adds **Spots**.
+The layout follows Two Degrees on the iPhone (itself after Apple's Weather): **one full page per
+place, swiped between, each on its own evening's sky**, with a bottom bar. (Owner decision; this
+replaces the earlier Tonight, Week and Plans tabs.)
 
-1. **Tonight.** Place chips at the top (as in Two Degrees). The evening's sky as the background.
-   The score as a large numeral with five proportionally filled stars, the colour class, the verdict, the range, the
-   reason, any warning, and a times strip (golden hour, best window, sunset, afterglow, last
-   light). "Up 0.6 since this morning" when known. The four parts open on tap. A "Plan this
-   evening" button.
-2. **Week.** Ten rows. Six rated evenings: day, stars, numeral, verdict, sunset time, reason;
-   Outlook rows use outlined half stars and a range. Four unrated rows: sunset time and "Too early
-   to call". The best evening carries a badge. A "Compare places" switch turns the list into a
-   grid: one row per saved place (up to five), one column per rated evening, each cell a numeral
-   and verdict icon.
-3. **Plans.** A list of saved plans, soonest first, with edit and delete. Empty state: "No plans
-   yet. Pick an evening to start one." Past plans move under "Earlier".
-4. **Plan.** The spot on a map, the plan times as a timeline, the bring checklist, after-dark
+1. **A place's page.** One page per saved place, the full width of the screen. Swipe left or right
+   (or use the arrow keys, or tap a dot) to change place; each page scrolls up and down on its own
+   and keeps its position. From top to bottom: the evening's name and the place; the score as a
+   large numeral with five proportionally filled stars; the colour class; the verdict; the range;
+   the reason; any warning; "Plan this evening"; the times strip; **the next ten evenings** (six
+   rated, four "Too early to call", the best one badged); and the four parts behind the score.
+   Tapping one of the ten evenings shows it at the top of the page, with a way back to tonight.
+2. **The bottom bar.** Plans on the left, a dot for each place in the middle (an arrow for the
+   current location; a count such as "3 of 12" beyond seven places), and Places on the right.
+3. **Places.** The list of places, each a card with a swatch of its sky, tonight's score, colour
+   class, verdict, sunset time and reason. Search to add a place, "Use my location", Edit to remove,
+   the units switch, and "Compare places": a grid of one row per place and one column per rated
+   evening.
+4. **Plans.** A list of saved plans, soonest first. Empty state: "No plans yet. Pick an evening to
+   start one." Past plans move under "Earlier".
+5. **Plan.** The spot on a map, the plan times as a timeline, the bring checklist, after-dark
    facts, then Share, Add to calendar and Directions.
-5. **Spots** (Release 2). A list and a map. Type toggles along the top. Each row: name, type, stars
-   at that spot, "about 25 min", view check, hours.
+6. **Spots** (Release 2). A list and a map, reached from a place's page.
+
+From 900 px wide a place's page has two columns: the evening on the left, its details on the right.
 
 ### 10.2 The plan flow
 
@@ -574,13 +579,14 @@ from the saved plan, followed by the notice and the system share sheet.
 **Release 2**, four taps: (1) Plan this evening; (2) who is coming, preselected; (3) pick one of
 three ranked spots, or pin your own; (4) Save.
 
-Tapping any rated row on Week opens that evening with the same "Plan this evening" button.
+Tapping any rated evening on a place's page shows that evening with the same "Plan this evening"
+button.
 
 ### 10.3 States
 
 | State | What the user sees |
 | --- | --- |
-| First run | A bundled sample city labelled "Sample", a search box, and "Use my location" |
+| First run | A bundled sample city's page labelled "Sample", with "Add a place", which opens search and "Use my location" |
 | Location refused | "Search for a place instead." Nothing else changes |
 | Loading | Card skeletons on the sky |
 | Offline | Cached forecast with "Updated 2 h ago". Saved plans open with a saved map image |

@@ -82,7 +82,7 @@
   const dist = (km) => two(G.distanceText(km, settings.imperialFirst));
 
   // ---------- State ----------
-  const S = { places: [], current: null, tab: 'tonight', day: null, view: null, plans: [], ratings: [], searching: false, results: null, notice: null };
+  const S = { places: [], current: null, dayBy: {}, view: null, plans: [], ratings: [], results: null, notice: null, editing: false };
   const DATA = {};   // placeId → {fc, source: 'live' | 'cache' | 'sample', fetchedAt, error, ceiling, prev: {date → {score, at}}, snaps: {date → snap}}
   const SAMPLE = { id: 'sample', name: 'Denver', region: 'Colorado', lat: 39.7392, lon: -104.9903, tz: 'America/Denver', sample: true };
   const place = (id) => S.places.find((p) => p.id === (id || S.current)) || S.places[0];
@@ -289,49 +289,106 @@
   }
 
   // ---------- Drawing: the frame ----------
+  // After Two Degrees on the iPhone (and Apple's Weather): one full page per place, swiped between, each on
+  // its own evening's sky, with a bottom bar of plans, page dots and the list of places.
+  const scrolls = {};   // placeId → how far down its page is scrolled
+  const screen = (html) => `<div class="screen"><div class="inner">${html}</div></div>`;
+  function dyn(root) {
+    for (const el of $$('[data-w]', root)) el.style.width = el.dataset.w + '%';
+    for (const el of $$('[data-sky]', root)) { const [t, m, b] = el.dataset.sky.split(','); el.style.background = `linear-gradient(${t}, ${m} 60%, ${b})`; }
+  }
+  /** The rating of the evening a place's page is showing. */
+  function shownRating(p) {
+    const evs = evenings(p), f = focusDay(p, evs), ev = evs[S.dayBy[p.id] == null ? f : S.dayBy[p.id]] || evs[f];
+    return ev.rating;
+  }
+  /** Draws the screen. Replacing a focused field can fire its change event mid-draw; that redraw waits its turn. */
+  let drawing = false, drawAgain = false;
   function render() {
-    const shared = S.view && S.view.type === 'shared';
-    $('#unitsImperial').setAttribute('aria-pressed', String(settings.imperialFirst));
-    $('#unitsMetric').setAttribute('aria-pressed', String(!settings.imperialFirst));
-    $('#places').hidden = shared || !!S.view;
-    $('#tabs').hidden = shared;
-    for (const t of ['tonight', 'week', 'plans']) $(`#tab${t[0].toUpperCase()}${t.slice(1)}`).toggleAttribute('aria-current', false);
-    if (!shared) $(`#tab${S.tab[0].toUpperCase()}${S.tab.slice(1)}`).setAttribute('aria-current', 'page');
-    drawPlaces(); drawSearch(); drawBanner();
-    const v = $('#view');
-    if (shared) v.innerHTML = sharedView();
-    else if (S.view && S.view.type === 'plan') v.innerHTML = planView();
-    else if (S.view && S.view.type === 'log') v.innerHTML = logView();
-    else if (S.tab === 'week') v.innerHTML = weekView();
-    else if (S.tab === 'plans') v.innerHTML = plansView();
-    else v.innerHTML = tonightView();
-    drawFoot();
-    for (const el of $$('[data-w]', v)) el.style.width = el.dataset.w + '%';
-    if (S.view && (S.view.type === 'plan' || shared)) mountMap();
+    if (drawing) { drawAgain = true; return; }
+    drawing = true;
+    try { draw(); } finally { drawing = false; }
+    if (drawAgain) { drawAgain = false; render(); }
   }
-
-  function drawPlaces() {
-    const el = $('#places');
-    el.innerHTML = S.places.map((p) => `<span class="chip-wrap"><button type="button" class="chip" data-act="place" data-id="${esc(p.id)}"${p.id === S.current ? ' aria-current="true"' : ''}>${esc(p.name)}${p.sample ? ' <span class="tag">Sample</span>' : ''}</button>${S.editing && S.places.length > 1 ? `<button type="button" class="chip-x" data-act="remove" data-id="${esc(p.id)}" aria-label="Remove ${esc(p.name)}">×</button>` : ''}</span>`).join('')
-      + `<button type="button" class="chip add" data-act="search" aria-label="Add a place" aria-expanded="${S.searching}">+</button>`
-      + (S.places.length > 1 ? `<button type="button" class="btn quiet" data-act="edit">${S.editing ? 'Done' : 'Edit'}</button>` : '');
-  }
-
-  function drawSearch() {
-    const el = $('#search');
-    el.hidden = !S.searching || !!S.view;
-    if (el.hidden) { el.innerHTML = ''; return; }
-    if (!$('#q', el)) {
-      el.innerHTML = `<div class="box"><input id="q" type="search" placeholder="Search for a place" autocomplete="off" aria-label="Search for a place"></div>
-        <div class="row" id="searchActions"><button type="button" class="btn" data-act="locate">Use my location</button><span class="sp"></span><button type="button" class="btn quiet" data-act="search">Close</button></div>
-        <div class="results" id="results" aria-live="polite"></div>`;
-      $('#q', el).addEventListener('input', onSearchInput);
-      $('#q', el).focus();
+  function draw() {
+    const v = $('#view'), view = S.view;
+    for (const pg of $$('.page', v)) scrolls[pg.dataset.id] = pg.scrollTop;
+    if (view && view.type === 'shared') v.innerHTML = screen(sharedView());
+    else if (view && view.type === 'plan') v.innerHTML = screen(planView());
+    else if (view && view.type === 'log') v.innerHTML = screen(logView());
+    else if (view && view.type === 'plans') v.innerHTML = screen(plansView());
+    else if (view && view.type === 'list') v.innerHTML = screen(listView());
+    else {
+      v.innerHTML = `<div class="pager" id="pager">${S.places.map((p) => `<section class="page" data-id="${esc(p.id)}" aria-label="${esc(p.name)}"><div class="inner">${pageHtml(p)}</div></section>`).join('')}</div>`;
+      const pager = $('#pager');
+      for (const pg of $$('.page', pager)) pg.scrollTop = scrolls[pg.dataset.id] || 0;
+      pager.scrollLeft = Math.max(0, S.places.findIndex((p) => p.id === S.current)) * pager.clientWidth;
+      pager.addEventListener('scroll', onSwipe, { passive: true });
+      const p = place();
+      if (p) setSky(shownRating(p));
     }
-    const list = $('#results', el);
-    if (S.results === null) list.innerHTML = '';
-    else if (typeof S.results === 'string') list.innerHTML = `<p class="small muted">${esc(S.results)}</p>`;
-    else list.innerHTML = S.results.map((r, i) => `<button type="button" class="result" data-act="add" data-i="${i}"><span><span class="n">${esc(r.name)}</span><br><span class="r">${esc(r.region)}</span></span><span class="sp"></span><span aria-hidden="true">+</span></button>`).join('');
+    drawBar(); drawBanner(); dyn(v);
+    if (view && view.type === 'list') bindSearch();
+    if (view && (view.type === 'plan' || view.type === 'shared')) mountMap();
+  }
+  /** Redraws one place where it stands, so a forecast arriving never disturbs a swipe or what is being typed. */
+  function update(p) {
+    if (S.view && S.view.type === 'list') {
+      const rows = $('#listRows');
+      if (rows) { rows.innerHTML = listRows(); const c = $('#compare'); if (c) c.innerHTML = compareHtml(); dyn($('#view')); }
+      return;
+    }
+    if (S.view) return;
+    const pg = $$('.page').find((x) => x.dataset.id === p.id);
+    if (!pg) return render();
+    const top = pg.scrollTop;
+    $('.inner', pg).innerHTML = pageHtml(p);
+    dyn(pg); pg.scrollTop = top;
+    if (p.id === S.current) { setSky(shownRating(p)); drawBanner(); }
+  }
+  /** A swipe has settled on (or is passing) another place: it becomes the current one. */
+  let swipeFrame = 0;
+  function onSwipe(e) {
+    const pager = e.currentTarget;
+    if (swipeFrame) return;
+    swipeFrame = requestAnimationFrame(() => {
+      swipeFrame = 0;
+      const p = S.places[Math.round(pager.scrollLeft / (pager.clientWidth || 1))];
+      if (!p || p.id === S.current || S.view) return;
+      S.current = p.id; store.set('current', p.id);
+      setSky(shownRating(p)); drawBar(); drawBanner();
+      loadLogged(p).then(() => load(p)).then(() => update(p));
+    });
+  }
+  /** Opens a place's page. From the pager it slides there; from another screen it opens on it. */
+  function goTo(id, smooth) {
+    const pager = !S.view && $('#pager'), i = S.places.findIndex((p) => p.id === id);
+    if (i < 0) return;
+    if (pager && smooth) return pager.scrollTo({ left: i * pager.clientWidth, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    S.view = null; S.current = id; store.set('current', id);
+    render();
+    const p = place();
+    loadLogged(p).then(() => load(p)).then(() => update(p));
+  }
+
+  const BAR = {
+    plans: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-6.500-5.400-6.500-10.500a6.500 6.500 0 0 1 13 0C18.500 15.600 12 21 12 21z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><circle cx="12" cy="10.500" r="2.300" fill="currentColor"/></svg>',
+    list: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 7h12M8 12h12M8 17h12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="4" cy="7" r="1.200" fill="currentColor"/><circle cx="4" cy="12" r="1.200" fill="currentColor"/><circle cx="4" cy="17" r="1.200" fill="currentColor"/></svg>',
+    here: '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M11 1 1 5.200l4.300 1.500L6.800 11z" fill="currentColor"/></svg>',
+  };
+  /** Plans · page dots · the list of places, on a thin frosted bar. */
+  function drawBar() {
+    // Only the page showing can be reached by keyboard or read aloud.
+    for (const pg of $$('.page')) { const on = pg.dataset.id === S.current; pg.toggleAttribute('inert', !on); if (on) pg.setAttribute('aria-current', 'true'); else pg.removeAttribute('aria-current'); }
+    const bar = $('#bar');
+    bar.hidden = !!S.view;
+    if (bar.hidden) return;
+    const i = S.places.findIndex((p) => p.id === S.current);
+    const dots = S.places.length > 7 ? `<span class="count num">${i + 1} of ${S.places.length}</span>`
+      : S.places.map((p) => `<button type="button" class="dot" data-act="goto" data-id="${esc(p.id)}" aria-label="${esc(p.name)}"${p.id === S.current ? ' aria-current="true"' : ''}>${p.here ? BAR.here : '<i></i>'}</button>`).join('');
+    bar.innerHTML = `<button type="button" class="barbtn" data-act="open-plans">${BAR.plans}<span>Plans</span></button>
+      <div class="dots">${dots}</div>
+      <button type="button" class="barbtn" data-act="open-list">${BAR.list}<span>Places</span></button>`;
   }
 
   function drawBanner() {
@@ -345,10 +402,53 @@
     el.innerHTML = html;
   }
 
-  function drawFoot() {
-    $('#foot').innerHTML = `<p>Golden Hour has no accounts and collects nothing. To get forecasts and places, your device sends coordinates to Open-Meteo and the map tile host. Ratings are a forecast, not a promise: the first two days are the most reliable.</p>
+  const unitsSeg = () => `<div class="seg" role="group" aria-label="Which units are listed first"><button type="button" data-act="units" data-v="imperial" aria-pressed="${settings.imperialFirst}">°F · mi</button><button type="button" data-act="units" data-v="metric" aria-pressed="${!settings.imperialFirst}">°C · km</button></div>`;
+  function footHtml() {
+    return `<footer class="foot card"><p>Golden Hour has no accounts and collects nothing. To get forecasts and places, your device sends coordinates to Open-Meteo and the map tile host. Ratings are a forecast, not a promise: the first two days are the most reliable.</p>
       <p>Weather by <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> (CC BY 4.0), air quality from CAMS. Maps: <a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a>, © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>. Places from <a href="https://www.geonames.org" target="_blank" rel="noopener">GeoNames</a> (CC BY 4.0). Sun and moon after SunCalc.</p>
-      <p><button type="button" class="btn quiet" data-act="log">My sunset log</button> · <a href="https://github.com/bradleycowdrey/golden-hour" target="_blank" rel="noopener">Source</a> · <a href="https://bradcowdrey.com/legal" target="_blank" rel="noopener">Terms and privacy</a> · Free and open source, by <a href="https://bradcowdrey.com" target="_blank" rel="noopener">Bradley Cowdrey</a> · ${esc(VERSION)}</p>`;
+      <p><button type="button" class="btn quiet" data-act="log">My sunset log</button> · <a href="https://github.com/bradleycowdrey/golden-hour" target="_blank" rel="noopener">Source</a> · <a href="https://bradcowdrey.com/legal" target="_blank" rel="noopener">Terms and privacy</a> · Free and open source, by <a href="https://bradcowdrey.com" target="_blank" rel="noopener">Bradley Cowdrey</a> · ${esc(VERSION)}</p></footer>`;
+  }
+
+  // ---------- The list of places: each with tonight's score, search to add, and compare ----------
+  function listRows() {
+    return S.places.map((p) => {
+      const evs = evenings(p), f = focusDay(p, evs), ev = evs[f], r = ev.rating, d = DATA[p.id] || {};
+      const when = ev.times.sunset == null ? 'No sunset on this date' : `${f === 1 ? 'Tomorrow' : 'Tonight'} · sunset ${timeText(ev.times.sunset, p.tz)}`;
+      const right = r ? `<span class="rt" aria-hidden="true"><span class="big num">${scoreText(r)}</span>${colourHtml(r, true)}<span class="v ${r.verdict}">${ICON[r.verdict]}${r.verdictWord}</span></span>`
+        : `<span class="rt muted small">${d.error ? 'No forecast' : ev.times.state === 'none' ? '' : '…'}</span>`;
+      return `<div class="lrow-wrap"><button type="button" class="lrow card" data-act="goto" data-id="${esc(p.id)}"${r ? ` aria-label="${esc(p.name)}. ${esc(spoken(f === 1 ? 'Tomorrow' : 'Tonight', r))}"` : ''}>
+        <span class="swatch" data-sky="${skyFor(r).join(',')}" aria-hidden="true"></span>
+        <span class="l"><span class="n">${esc(p.name)}${p.sample ? ' <span class="tag">Sample</span>' : ''}${p.here ? ' <span class="tag">Here</span>' : ''}</span><span class="r">${esc(when)}</span>${r ? `<span class="why">${esc(r.reason)}</span>` : ''}</span>${right}</button>
+        ${S.editing && S.places.length > 1 ? `<button type="button" class="chip-x" data-act="remove" data-id="${esc(p.id)}" aria-label="Remove ${esc(p.name)}">×</button>` : ''}</div>`;
+    }).join('');
+  }
+  function compareHtml() {
+    const real = S.places.filter((x) => !x.sample).slice(0, 5);
+    if (!settings.compare || real.length < 2) return '';
+    const cols = evenings(real[0]).slice(0, 6);
+    const head = `<tr><th class="p">Place</th>${cols.map((e) => `<th>${esc(e.day === 0 ? 'Today' : dayName(e.date))}</th>`).join('')}</tr>`;
+    const rows = real.map((q) => `<tr><th class="p" scope="row">${esc(q.name)}</th>${evenings(q).slice(0, 6).map((e) => (e.rating
+      ? `<td><button type="button" data-act="cell" data-id="${esc(q.id)}" data-day="${e.day}" aria-label="${esc(q.name)}, ${esc(spoken(e.day === 0 ? 'Today' : dayName(e.date, true), e.rating))}"><span>${scoreText(e.rating)}</span><span class="v ${e.rating.verdict}">${ICON[e.rating.verdict]}</span></button></td>`
+      : `<td><span class="muted small">${DATA[q.id] && DATA[q.id].error ? '!' : '–'}</span></td>`)).join('')}</tr>`).join('');
+    return `<div class="grid-scroll"><table class="cmp">${head}${rows}</table></div><p class="small muted" data-gap>Stars out of 5 for each evening. Tap a cell to open that place and evening.</p>`;
+  }
+  function listView() {
+    const real = S.places.filter((x) => !x.sample);
+    return `<div class="row top"><h1>Places</h1><span class="sp"></span>${unitsSeg()}<button type="button" class="btn white" data-act="close-view">Done</button></div>
+      <section class="search card"><div class="box"><input id="q" type="search" placeholder="Search for a place to add" autocomplete="off" aria-label="Search for a place to add"></div>
+        <div class="results" id="results" aria-live="polite"></div>
+        <div class="row" data-gap><button type="button" class="btn" data-act="locate">Use my location</button><span class="sp"></span>${S.places.length > 1 ? `<button type="button" class="btn quiet" data-act="edit">${S.editing ? 'Done editing' : 'Edit'}</button>` : ''}</div></section>
+      <div id="listRows" class="lrows">${listRows()}</div>
+      ${real.length > 1 ? `<section class="card"><p class="eyebrow">Side by side<span class="sp"></span><button type="button" class="tog" data-act="compare" aria-pressed="${settings.compare}"><i></i>Compare places</button></p><div id="compare">${compareHtml()}</div></section>` : ''}
+      ${footHtml()}`;
+  }
+  function bindSearch() { const q = $('#q'); if (q) { q.addEventListener('input', onSearchInput); if (S.focusSearch) { S.focusSearch = false; q.focus(); } } drawResults(); }
+  function drawResults() {
+    const list = $('#results');
+    if (!list) return;
+    if (S.results === null) list.innerHTML = '';
+    else if (typeof S.results === 'string') list.innerHTML = `<p class="small muted">${esc(S.results)}</p>`;
+    else list.innerHTML = S.results.map((r, i) => `<button type="button" class="result" data-act="add" data-i="${i}"><span><span class="n">${esc(r.name)}</span><br><span class="r">${esc(r.region)}</span></span><span class="sp"></span><span aria-hidden="true">+</span></button>`).join('');
   }
 
   // ---------- Tonight ----------
@@ -386,14 +486,12 @@
     return '';
   }
 
-  function tonightView() {
-    const p = place();
-    if (!p) return '';
+  /** One place's page: the evening, its times, the ten evenings ahead, and what is behind the score. */
+  function pageHtml(p) {
     const d = DATA[p.id] || {}, evs = evenings(p), f = focusDay(p, evs);
-    const ev = evs[S.day == null ? f : S.day] || evs[f], r = ev.rating;
-    setSky(r);
+    const ev = evs[S.dayBy[p.id] == null ? f : S.dayBy[p.id]] || evs[f], r = ev.rating;
     const label = evLabel(ev, p, evs);
-    const head = `<p class="when">${esc(label)} · ${esc(dayName(ev.date))} ${esc(dateText(ev.date))}</p><h2>${esc(p.name)}</h2>`;
+    const head = `<p class="when">${esc(label)} · ${esc(dayName(ev.date))} ${esc(dateText(ev.date))}</p><h2>${esc(p.name)}${p.sample ? ' <span class="tag">Sample</span>' : ''}</h2>`;
     let hero;
     if (ev.times.state === 'none') hero = `<section class="hero">${head}<p class="none">No sunset here on this date</p><p class="reason">${ev.times.polar === 'day' ? 'The sun stays up all night.' : 'The sun stays below the horizon.'}</p></section>`;
     else if (r) {
@@ -406,7 +504,6 @@
         <p class="range" aria-hidden="true">${r.tier === 'outlook' ? 'Outlook' : r.tier === 'forecast' ? 'Forecast' : 'Tonight'} · ${rangeText(r)} <span class="muted">(typical)</span></p>
         <p class="reason" aria-hidden="true">${esc(r.reason)}</p>
         ${stale ? '<p class="delta">Out of date. Reconnect to refresh.</p>' : deltaLine(p, ev)}
-        ${p.sample ? '<p class="delta">A sample forecast. Add your own place to see the real one.</p>' : ''}
       </section>`;
     } else if (ev.day > 5) hero = `<section class="hero">${head}<p class="none">Too early to call</p><p class="reason">Sunset is at ${esc(timeText(ev.times.sunset, p.tz))}. A rating appears five days ahead.</p></section>`;
     else if (d.error) hero = `<section class="hero">${head}<p class="none">${d.error === 'ceiling' ? 'Refreshing again tomorrow' : 'Couldn’t reach the forecast'}</p><div class="cta"><button type="button" class="btn white" data-act="retry">Try again</button></div></section>`;
@@ -416,10 +513,14 @@
     const warns = r ? r.warnings.map((w) => `<div class="warn" role="note">${ICON.warn}<span>${esc(w.text)}</span></div>`).join('') : '';
     const canPlan = ev.times.state !== 'none' && now() < endOf(ev, p);
     const cta = canPlan ? `<div class="cta"><button type="button" class="btn primary" data-act="plan-new" data-date="${ev.date}">Plan this evening</button></div>` : '';
+    const sample = p.sample ? `<section class="card"><p><b>This is a sample forecast.</b> Add your own place to see the real one. You can add several and swipe between them.</p><div class="row" data-gap><button type="button" class="btn white" data-act="add-place">Add a place</button></div></section>` : '';
     const timesCard = ev.times.state === 'none' ? '' : `<section class="card"><p class="eyebrow">The evening<span class="sp"></span><span class="aside">Sun sets to the ${esc(compass(ev.times.azimuth))}</span></p>${timesStrip(ev, p.tz)}
       <p class="small muted" data-gap>${ev.times.state === 'twilight' ? 'Twilight lasts all night at this time of year.' : 'The best colour often comes after the sun is down. Stay through the afterglow.'}</p></section>`;
-    const back = S.day != null && S.day !== f ? `<button type="button" class="btn quiet back" data-act="day" data-day="">‹ Back to ${f === 1 ? 'tomorrow' : 'tonight'}</button>` : '';
-    return `${back}<div class="two"><div class="col">${hero}${warns}${cta}</div><div class="col">${howWasIt(p, evs)}${timesCard}${r ? partsCard(ev) : ''}</div></div>`;
+    const back = S.dayBy[p.id] != null && S.dayBy[p.id] !== f ? `<button type="button" class="btn quiet back" data-act="day" data-day="">‹ Back to ${f === 1 ? 'tomorrow' : 'tonight'}</button>` : '';
+    const best = bestOf(evs);
+    const week = `<section class="card week"><p class="eyebrow">The next ten evenings</p>${evs.map((e) => dayRow(e, p, evs, best)).join('')}
+      <p class="small muted" data-gap>Today and the next two evenings are a forecast. Days three to five are an outlook and may change. Beyond that it is too early to call.</p></section>`;
+    return `${back}<div class="two"><div class="col">${hero}${warns}${cta}${sample}</div><div class="col">${howWasIt(p, evs)}${timesCard}${week}${r ? partsCard(ev) : ''}</div></div>${footHtml()}`;
   }
   const compass = (deg) => ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'][Math.round(G.normalize(deg) / 45) % 8];
 
@@ -453,7 +554,6 @@
     }
   }
   function logView() {
-    setSky(null);
     const rows = S.ratings.filter((r) => r.observed).sort((a, b) => (a.date < b.date ? 1 : -1));
     const name = (id) => { const p = S.places.find((x) => x.id === id); return p ? p.name : 'A removed place'; };
     const within = rows.filter((r) => Math.abs(r.observed - r.predicted) <= 1).length;
@@ -484,37 +584,13 @@
       <span class="why">${out ? `${rangeText(r)} · ` : ''}${esc(r.reason)}</span></span>
       <span class="right" aria-hidden="true"><span class="v ${r.verdict}">${ICON[r.verdict]}${r.verdictWord}</span>${sunset}</span></button>`;
   }
-  function weekView() {
-    const p = place();
-    if (!p) return '';
-    const evs = evenings(p), best = bestOf(evs);
-    setSky(evs[focusDay(p, evs)].rating);
-    const real = S.places.filter((x) => !x.sample || S.places.length === 1);
-    const toggle = real.length > 1 ? `<button type="button" class="tog" data-act="compare" aria-pressed="${settings.compare}"><i></i>Compare places</button>` : '';
-    if (settings.compare && real.length > 1) {
-      const cols = evs.slice(0, 6);
-      const head = `<tr><th class="p">Place</th>${cols.map((e) => `<th>${esc(e.day === 0 ? 'Today' : dayName(e.date))}</th>`).join('')}</tr>`;
-      const rows = real.slice(0, 5).map((q) => {
-        const qe = evenings(q);
-        return `<tr><th class="p" scope="row">${esc(q.name)}</th>${qe.slice(0, 6).map((e) => (e.rating
-          ? `<td><button type="button" data-act="cell" data-id="${esc(q.id)}" data-day="${e.day}" aria-label="${esc(q.name)}, ${esc(spoken(e.day === 0 ? 'Today' : dayName(e.date, true), e.rating))}"><span>${scoreText(e.rating)}</span><span class="v ${e.rating.verdict}">${ICON[e.rating.verdict]}</span></button></td>`
-          : `<td><span class="muted small">${DATA[q.id] && DATA[q.id].error ? '!' : '–'}</span></td>`)).join('')}</tr>`;
-      }).join('');
-      return `<section class="card"><p class="eyebrow">Compare places<span class="sp"></span>${toggle}</p><div class="grid-scroll"><table class="cmp">${head}${rows}</table></div>
-        <p class="small muted" data-gap>Stars out of 5 for each evening. Tap a cell to open that place and evening.</p></section>`;
-    }
-    return `<section class="card"><p class="eyebrow">${esc(p.name)} · the next ten evenings<span class="sp"></span>${toggle}</p>${evs.map((e) => dayRow(e, p, evs, best)).join('')}
-      <p class="small muted" data-gap>Today and the next two evenings are a forecast. Days three to five are an outlook and may change. Beyond that it is too early to call.</p></section>`;
-  }
-
   // ---------- Plans ----------
   function plansView() {
-    setSky(null);
     const today = localDate(now(), deviceTz());
     const upcoming = S.plans.filter((p) => p.date >= today).sort((a, b) => (a.date < b.date ? -1 : 1));
     const earlier = S.plans.filter((p) => p.date < today).sort((a, b) => (a.date < b.date ? 1 : -1));
     const row = (p) => `<button type="button" class="plan-row" data-act="plan-open" data-id="${esc(p.id)}"><span><span class="n">${esc(p.spot.name)}</span><br><span class="r">${esc(dayName(p.date, true))} ${esc(dateText(p.date))} · meet at ${esc(timeText(p.times.meetAt, p.tz))} · sunset ${esc(timeText(p.times.sunset, p.tz))}</span></span><span class="sp"></span><span aria-hidden="true">›</span></button>`;
-    return `<section class="card"><p class="eyebrow">Plans</p>${upcoming.length ? upcoming.map(row).join('') : '<p class="empty">No plans yet. Pick an evening to start one.</p>'}</section>
+    return `<div class="row top"><button type="button" class="btn quiet back" data-act="close-view">‹ Back</button></div><section class="card"><p class="eyebrow">Plans</p>${upcoming.length ? upcoming.map(row).join('') : '<p class="empty">No plans yet. Pick an evening to start one.</p>'}</section>
       ${earlier.length ? `<section class="card"><p class="eyebrow">Earlier</p>${earlier.map(row).join('')}</section>` : ''}`;
   }
 
@@ -748,7 +824,6 @@
     const plan = toPlan(dr);
     await db.put('plans', plan);
     S.plans = S.plans.filter((x) => x.id !== plan.id).concat(plan);
-    S.tab = 'plans';
     render();
     toast('Plan saved. It works offline.');
   }
@@ -767,7 +842,7 @@
     if (!pl) return;
     if (S.places.some((p) => p.id === pl.placeId)) S.current = pl.placeId;
     S.view = { type: 'plan', draft: { id: pl.id, saved: true, placeId: pl.placeId, tz: pl.tz, date: pl.date, spot: { ...pl.spot }, walkIn: pl.walkIn, start: pl.start, items: pl.items, mapImage: pl.mapImage, createdAt: pl.createdAt } };
-    render(); window.scrollTo(0, 0);
+    render();
     load(place()).then(render);
   }
   function shareUrl(plan) { return location.origin + location.pathname + '#p=' + G.encodePlan({ ...plan, sharedAt: now() }); }
@@ -820,7 +895,7 @@
   function onSearchInput(e) {
     const q = e.target.value.trim(), seq = ++searchSeq;
     clearTimeout(searchTimer);
-    if (q.length < 2) { S.results = null; return drawSearch(); }
+    if (q.length < 2) { S.results = null; return drawResults(); }
     searchTimer = setTimeout(async () => {
       let out = null;
       try {
@@ -836,7 +911,7 @@
       }
       if (seq !== searchSeq) return;
       S.results = Array.isArray(out) && !out.length ? 'No places found.' : out;
-      drawSearch();
+      drawResults();
     }, 250);
   }
   /** A fixed-offset zone from the longitude, for a place found offline (no zone in the bundled list). */
@@ -848,10 +923,8 @@
     for (const s of S.places.filter((x) => x.sample)) db.del('places', s.id);
     S.places = S.places.filter((x) => x.id !== id && !x.sample).concat(p);
     await db.put('places', p);
-    S.current = id; S.searching = false; S.results = null; S.day = null; store.set('current', id);
-    render();
-    await loadLogged(p); await load(p, true);
-    render();
+    S.results = null; S.editing = false;
+    goTo(id);
   }
   function locate(then) {
     if (!navigator.geolocation) return toast('Search for a place instead.');
@@ -871,40 +944,43 @@
   // ---------- Events ----------
   const ACT = {
     units(el) { settings.imperialFirst = el.dataset.v === 'imperial'; store.set('imperialFirst', settings.imperialFirst); keepFields(); render(); },
-    tab(el) { keepFields(); autosave(); S.tab = el.dataset.v; S.view = null; S.day = null; S.searching = false; render(); window.scrollTo(0, 0); if (S.tab === 'week' && settings.compare) loadAll(); },
-    async place(el) { S.current = el.dataset.id; S.day = null; store.set('current', S.current); render(); const p = place(); await loadLogged(p); await load(p); render(); },
-    search() { S.searching = !S.searching; S.results = null; render(); },
+    search() {},
+    goto(el) { goTo(el.dataset.id, !S.view); },
+    'open-list'() { S.view = { type: 'list' }; S.results = null; render(); loadAll(); },
+    'open-plans'() { S.view = { type: 'plans' }; render(); },
+    'add-place'() { S.view = { type: 'list' }; S.results = null; S.focusSearch = true; render(); },
     edit() { S.editing = !S.editing; render(); },
     async remove(el) {
       const id = el.dataset.id;
       S.places = S.places.filter((p) => p.id !== id); await db.del('places', id);
-      if (S.current === id) S.current = S.places[0].id;
+      delete DATA[id];
+      if (S.current === id) { S.current = S.places[0].id; store.set('current', S.current); }
       if (S.places.length < 2) S.editing = false;
-      render(); load(place()).then(render);
+      render();
     },
     add(el) { const r = S.results[Number(el.dataset.i)]; if (r) addPlace(r); },
     locate() { locate(async (lat, lon) => { const n = await nameNear(lat, lon); addPlace({ ...n, lat, lon, tz: deviceTz() }, true); }); },
-    async retry() { const p = place(); DATA[p.id].error = null; render(); await load(p, true); render(); },
-    day(el) { S.day = el.dataset.day === '' ? null : Number(el.dataset.day); S.tab = 'tonight'; S.view = null; render(); window.scrollTo(0, 0); },
-    async cell(el) { S.current = el.dataset.id; store.set('current', S.current); S.day = Number(el.dataset.day); S.tab = 'tonight'; render(); window.scrollTo(0, 0); await loadLogged(place()); render(); },
+    async retry() { const p = place(); DATA[p.id].error = null; update(p); await load(p, true); update(p); },
+    day(el) { const p = place(); S.dayBy[p.id] = el.dataset.day === '' ? null : Number(el.dataset.day); update(p); const pg = $$('.page').find((x) => x.dataset.id === p.id); if (pg) pg.scrollTo({ top: 0 }); },
+    cell(el) { S.dayBy[el.dataset.id] = Number(el.dataset.day); scrolls[el.dataset.id] = 0; goTo(el.dataset.id); },
     compare() { settings.compare = !settings.compare; store.set('compare', settings.compare); render(); if (settings.compare) loadAll(); },
     async rate(el) {
       const p = place(), date = el.dataset.date, v = Number(el.dataset.v), rec = DATA[p.id].logged[date];
       const r = { placeId: p.id, date, predicted: rec.score, parts: rec.parts, observed: v || null, at: now() };
       S.ratings.push(r); await db.put('ratings', r);
-      render(); toast(v ? 'Thanks. Saved to your sunset log.' : 'Noted.');
+      update(p); toast(v ? 'Thanks. Saved to your sunset log.' : 'Noted.');
     },
-    log() { S.view = { type: 'log' }; render(); window.scrollTo(0, 0); },
+    log() { S.view = { type: 'log' }; render(); },
     async 'copy-log'() { try { await navigator.clipboard.writeText(JSON.stringify(S.ratings, null, 1)); toast('Log copied'); } catch { toast('Couldn’t copy'); } },
-    'close-view'() { keepFields(); autosave(); S.view = null; render(); window.scrollTo(0, 0); },
-    'plan-new'(el) { S.view = { type: 'plan', draft: newDraft(el.dataset.date) }; render(); window.scrollTo(0, 0); },
+    'close-view'() { keepFields(); autosave(); const v = S.view; S.view = v && v.type === 'plan' && v.draft.saved ? { type: 'plans' } : null; S.editing = false; render(); },
+    'plan-new'(el) { S.view = { type: 'plan', draft: newDraft(el.dataset.date) }; render(); },
     'plan-open'(el) { openPlan(el.dataset.id); },
     'plan-save'() { savePlan(); },
     async 'plan-del'() {
       if (!window.confirm('Delete this plan?')) return;
       const id = S.view.draft.id;
       S.plans = S.plans.filter((p) => p.id !== id); await db.del('plans', id);
-      S.view = null; render();
+      S.view = { type: 'plans' }; render();
     },
     'pin-here'() { locate((lat, lon) => setPin(lat, lon)); },
     'pin-place'() { const p = place(S.view.draft.placeId); setPin(p.lat, p.lon); },
@@ -948,20 +1024,26 @@
       dr.items = items; autosave();
     }
   });
-  document.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.id === 'newItem') ACT['item-add'](); });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.target.id === 'newItem') return ACT['item-add']();
+    if (S.view || /INPUT|SELECT|TEXTAREA/.test(e.target.tagName) || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
+    const next = S.places[S.places.findIndex((p) => p.id === S.current) + (e.key === 'ArrowRight' ? 1 : -1)];
+    if (next) goTo(next.id, true);
+  });
+  window.addEventListener('resize', () => { const pager = $('#pager'); if (pager) pager.scrollLeft = Math.max(0, S.places.findIndex((p) => p.id === S.current)) * pager.clientWidth; });
 
   async function loadAll() {
-    for (const p of S.places.slice(0, 5)) { const d = DATA[p.id]; if (!d || !d.fc || now() - d.fetchedAt > 3 * HOUR) { await load(p); render(); } }
+    for (const p of S.places.slice()) { const d = DATA[p.id]; if (!d || !d.fc || now() - d.fetchedAt > 3 * HOUR) { await load(p); update(p); } }
   }
 
   // ---------- Keeping current: every 30 minutes while open, and on coming back to the tab ----------
   async function refresh() {
     if (document.visibilityState !== 'visible') return;
-    if (S.view && S.view.type === 'shared') return;
+    if (S.view && S.view.type !== 'list') return;
     const p = place();
     if (!p) return;
     const d = DATA[p.id];
-    if (!d || !d.fc || now() - d.fetchedAt >= 30 * MIN || p.sample) { await load(p, true); if (!$('input:focus')) render(); }
+    if (!d || !d.fc || now() - d.fetchedAt >= 30 * MIN || p.sample) { await load(p, true); update(p); }
   }
   setInterval(refresh, MIN);
   document.addEventListener('visibilitychange', refresh);
@@ -1004,7 +1086,7 @@
     const [places, plans, ratings, cached] = await Promise.all([db.all('places'), db.all('plans'), db.all('ratings'), db.all('cache')]);
     for (const c of cached || []) if (now() - c.fetchedAt > 3 * DAY) db.del('cache', c.url);
     S.places = (places || []).filter((p) => !p.sample);
-    if (!S.places.length) { S.places = [SAMPLE]; S.searching = true; }
+    if (!S.places.length) S.places = [SAMPLE];
     S.plans = plans || []; S.ratings = ratings || [];
     S.current = store.get('current', null);
     if (!S.places.some((p) => p.id === S.current)) S.current = S.places[0].id;
@@ -1012,7 +1094,8 @@
     if (p.sample) await load(p);
     render();
     await loadLogged(p); await load(p);
-    render();
+    update(p);
+    for (const q of S.places) if (q !== p && Math.abs(S.places.indexOf(q) - S.places.indexOf(p)) === 1) load(q).then(() => update(q));   // the pages either side, ready to swipe to
   }
   window.addEventListener('hashchange', () => { if (location.hash.startsWith('#p=')) openShared(location.hash); });
   window.__gh = { S, DATA, settings, render, db };   // read by tests/web.test.js
