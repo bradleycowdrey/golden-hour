@@ -8,6 +8,7 @@ const http = require('http');
 let playwright;
 try { playwright = require('playwright'); } catch { playwright = require(path.join(require('child_process').execSync('npm root -g').toString().trim(), 'playwright')); }
 const G = require('../web/core.js');
+const document_has = () => true;   // the sprite is checked below, in the page
 const G_decode = (text) => { const sp = G.decodeSpot(text.split('#s=')[1] || ''); return !!sp && sp.name === 'Linger'; };
 
 const ROOT = path.join(__dirname, '..', 'docs');
@@ -381,6 +382,11 @@ const server = http.createServer((req, res) => {
     const heads = (await cards.locator('.eyebrow > span:first-of-type').allInnerTexts()).map((h) => h.trim());
     check(heads.join('|') === 'LANDMARKS|ADVENTUROUS|DINING WITH A VIEW', `in that order (${heads.join(', ')})`);
     check(await cards.nth(0).locator('.srow').count() === 3, 'the top three of each');
+    const icons = await page.locator(CUR + '.ghplaces .srow .sbadge use').evaluateAll((els) => els.map((e) => e.getAttribute('href')));
+    check(icons.length === 9 && icons.every((h) => /^#k-[a-z]+$/.test(h) && document_has(h)), `every place has a picture of its kind (${[...new Set(icons)].join(' ')})`);
+    const kinds = Object.fromEntries(await page.locator(CUR + '.ghplaces .srow').evaluateAll((els) => els.map((e) => [e.querySelector('.n').textContent.trim(), e.querySelector('.sbadge use').getAttribute('href')])));
+    check(kinds['Lookout Mountain'] === '#k-summit' && kinds['Sky Bar'] === '#k-rooftop' && (kinds['Inspiration Point'] || '#k-viewpoint') === '#k-viewpoint', 'summits, rooftops and viewpoints each have their own picture');
+    check(await page.locator(CUR + '.ghplaces .srow .sbadge .rank').allInnerTexts().then((t) => t.join('') === '123123123'), 'each keeps its rank, one to three, on the corner of its picture');
     const first = (await cards.nth(0).locator('.srow .n').first().innerText()).trim();
     check(first === 'Sloan’s Lake Park' || first === 'Inspiration Point' || first === 'Sunset Park', `famous and sunset-named places rank first (${first})`);
     check((await cards.nth(1).innerText()).includes('Lookout Mountain') && /effort/i.test(await cards.nth(1).innerText()), 'adventurous places say how much effort they take');
@@ -389,6 +395,8 @@ const server = http.createServer((req, res) => {
     await shot(page, 'phone-places-section');
     await layout(page, 'place page with places (phone)');
 
+    const missing = await page.evaluate(() => Array.from(document.querySelectorAll('.srow use, .sbadge use')).map((u) => u.getAttribute('href')).filter((h) => !document.querySelector(h)));
+    check(missing.length === 0, `every picture is drawn in the page${missing.length ? ': missing ' + missing.join(' ') : ''}`);
     await page.click(CUR + '[data-act="spots-all"]');
     await page.waitForSelector('.screenhead h1');
     check((await text(page, '.screenhead h1')) === 'Golden Hour Places', 'See all opens Golden Hour Places');

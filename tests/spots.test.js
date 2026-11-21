@@ -52,3 +52,21 @@ test('the query asks for each kind of place, and a spot survives a share link', 
   assert.deepEqual(G.decodeSpot(link), { name: 'Lookout <b>', lat: 39.73223, lon: -105.2392, cat: 'adventurous', kind: 'Summit', effort: 'high' });
   assert.equal(G.decodeSpot('nope'), null);
 });
+
+test('each kind of place is named for its icon', () => {
+  const r = G.rankSpots([
+    node(1, 39.75, -105.0, { name: 'Point Light', man_made: 'lighthouse' }),
+    node(2, 39.751, -105.0, { name: 'Lookout', man_made: 'tower', 'tower:type': 'observation' }),
+    node(3, 39.752, -105.0, { name: 'Marina', leisure: 'marina' }),
+    node(4, 39.753, -105.0, { name: 'Lake', natural: 'water', wikidata: 'Q9' }),
+    node(5, 39.754, -105.0, { name: 'Bluffs', natural: 'cliff' }),
+    node(6, 39.755, -105.0, { name: 'Rose Garden', leisure: 'garden', wikidata: 'Q8' }),
+    node(7, 39.756, -105.0, { name: 'High Bar', amenity: 'bar', rooftop: 'yes' }),
+    node(8, 39.757, -105.0, { name: 'Corner Pub', amenity: 'pub', outdoor_seating: 'yes' }),
+  ], at);
+  const kinds = Object.fromEntries([...r.easy, ...r.dining].map((x) => [x.name, x.kind]));
+  assert.deepEqual(kinds, { 'Point Light': 'Lighthouse', Lookout: 'Lookout tower', Marina: 'Harbour', Lake: 'Lake', Bluffs: 'Cliff', 'Rose Garden': 'Garden', 'High Bar': 'Bar', 'Corner Pub': 'Pub' });
+  assert.equal(r.dining.find((x) => x.name === 'High Bar').rooftop, true);
+  assert.equal(r.dining.find((x) => x.name === 'Corner Pub').rooftop, false);
+  for (const part of ['man_made=lighthouse', '"tower:type"=observation', 'leisure=marina', 'natural=cliff']) assert.ok(G.spotsQuery(39.7, -105).includes(part), part);
+});
