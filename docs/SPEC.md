@@ -1,6 +1,6 @@
 # Golden Hour: plan and spec
 
-Version 11. An app by Bradley Cowdrey, in the same family as Two Degrees, Bearings and Meridian. Items marked **(verify)** come from memory or secondary sources
+Version 12. An app by Bradley Cowdrey, in the same family as Two Degrees, Bearings and Meridian. Items marked **(verify)** come from memory or secondary sources
 and must be checked against primary documentation before they are relied on.
 
 **How to read this.** Sections 1 to 3 and 12 to 15 are the plan: what it is, the order of work, how
@@ -619,6 +619,31 @@ button.
 | Twilight all night | Tonight rolls over at local midnight |
 
 ### 10.4 Look
+
+**The sky is the sunset.** Behind every screen is a picture of the evening as it might look, drawn
+from the forecast, in the manner of Apple's Weather backgrounds. The better the sunset, the more
+vivid the screen:
+
+- Five colours run from the top of the sky to the horizon. A flat evening is grey-blue; as the
+  colour score rises they deepen to indigo, violet, magenta, red-orange and gold. A cloudless
+  evening is a clean dark blue with one band of colour low down. Haze washes everything toward
+  grey.
+- A soft sun sits on the horizon with a glow around it, as strong as "sun in view" and the colour
+  score allow. Rain, fog and solid overcast have no sun.
+- Clouds are long, soft bands, as many as the cloud cover says, dusky on top and lit along their
+  undersides when light can reach them. They drift slowly (not at all when the reader has asked
+  for reduced motion). A bank of low cloud sits on the horizon when there is one; rain and snow
+  fall across a wet evening.
+- Each place has its own sky, and it fades into the next as you swipe.
+- Everything above the lowest fifth of the screen is kept dark enough for white text; the
+  brightest colour is at the horizon, where only cards pass over it. The tests draw the sky to a
+  canvas and measure the contrast of every piece of text against the brightest pixel behind it.
+
+**Icons** are filled and in colour, after the weather symbols on Apple's platforms: a sun on the
+horizon with rays for Go, the sun behind a cloud for Maybe, and for Skip the reason (a cloud, a
+rain cloud, or a pale sun on an empty horizon). The five moments of the evening each have their
+own: a full sun, a low sun, the sun setting under an arrow, the afterglow, and a crescent moon
+with stars.
 
 The owner's brief is a beautiful interface that starts from Two Degrees and goes further. The first
 step of Release 1 is a design pass: the mock-ups listed in acceptance criterion 1.0, approved by

@@ -236,17 +236,21 @@
   }
 
   // ---------- Drawing: small pieces ----------
-  const ICON = {
-    go: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="5" fill="currentColor"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.100 2.100M17 17l2.100 2.100M4.9 19.100l2.100-2.100M17 7l2.100-2.100" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
-    maybe: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 16a7 7 0 0 1 14 0z" fill="currentColor"/><path d="M2 20h20M12 4v3M4.200 9.200l2 2M19.800 9.200l-2 2" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg>',
-    skip: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 19a5 5 0 0 1-.6-9.960A6 6 0 0 1 18 10.500 4.300 4.300 0 0 1 17.500 19z" fill="currentColor"/></svg>',
-    warn: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 2 20h20z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M12 10v5M12 17.500v.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
-  };
+  const use = (name) => `<svg viewBox="0 0 32 32" aria-hidden="true"><use href="#i-${name}"/></svg>`;
+  const ICON = { go: use('sunset'), maybe: use('cloud-sun'), skip: use('cloud'), rain: use('cloud-rain'), clear: use('sun-pale'),
+    warn: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 2 20h20z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M12 10v5M12 17.500v.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>' };
+  /** The picture for an evening: a sunset for Go, sun through cloud for Maybe, and for Skip the reason it's a skip. */
+  function icon(r) {
+    if (r.verdict === 'go') return ICON.go;
+    if (r.cap === 'rain' || r.cap === 'snow' || r.cap === 'thunder') return ICON.rain;
+    if (r.verdict === 'maybe') return ICON.maybe;
+    return !r.cap && r.detail.canvas < 5 ? ICON.clear : ICON.skip;
+  }
   const STAR = 'M15 2.500l3.700 7.900 8.600 1.100-6.300 6 1.600 8.500L15 21.800 7.400 26l1.600-8.500-6.300-6 8.600-1.100z';
   const starRow = () => `<svg viewBox="0 0 150 30" aria-hidden="true">${[0, 1, 2, 3, 4].map((i) => `<path transform="translate(${i * 30} 0)" d="${STAR}"/>`).join('')}</svg>`;
   /** Five stars filled to `value`. Hidden from screen readers: the sentence beside them says it. */
   const stars = (value, outlook, small) => `<span class="stars${outlook ? ' outlook' : ''}${small ? ' sm' : ''}" aria-hidden="true"><span class="base">${starRow()}</span><span class="fill" data-w="${Math.max(0, Math.min(100, value / 5 * 100)).toFixed(1)}">${starRow()}</span></span>`;
-  const verdictHtml = (r, withQ) => `<span class="verdict ${r.verdict}">${ICON[r.verdict]}<span>${r.verdictWord}${withQ && r.qualifier ? `<span class="q">, ${esc(r.qualifier)}</span>` : ''}</span></span>`;
+  const verdictHtml = (r, withQ) => `<span class="verdict ${r.verdict}">${icon(r)}<span>${r.verdictWord}${withQ && r.qualifier ? `<span class="q">, ${esc(r.qualifier)}</span>` : ''}</span></span>`;
   const scoreText = (r) => (r.tier === 'outlook' ? r.shown.toFixed(1) : r.score.toFixed(1));
   const rangeText = (r) => `likely ${r.lo.toFixed(1)} to ${r.hi.toFixed(1)}`;
   const spoken = (label, r) => `${label}. ${scoreText(r)} out of 5 stars, ${rangeText(r)}. ${r.colourClass} colour, ${r.colour} out of 100. ${r.verdictWord}${r.qualifier ? ', ' + r.qualifier : ''}. ${r.reason}`;
@@ -259,25 +263,97 @@
     return dayName(ev.date, true);
   }
 
-  /** The sky behind everything, drawn from the evening's forecast: [top, mid, bottom]. */
-  function skyFor(r) {
-    if (!r) return ['#1B2440', '#33324A', '#5B4A55'];
-    if (r.cap || (r.parts.s < 0.2 && r.parts.c < 0.3)) return ['#272A33', '#3A3D46', '#565960'];
-    let sky = r.parts.c >= 0.7 ? ['#1A1F4A', '#7A3B6B', '#E8824A'] : r.parts.c >= 0.4 ? ['#1D2A4F', '#5C4A6E', '#C98A62']
-      : r.detail.canvas < 5 ? ['#16305F', '#3F5C8C', '#F0B36A'] : ['#232B45', '#4A4660', '#8F7468'];
-    const haze = (1 - r.parts.a) * 0.55;   // hazy air washes the colour toward grey
-    if (haze > 0.05) sky = sky.map((hex) => mix(hex, '#6A6660', haze));
-    return sky;
-  }
+  // ---------- The sky behind each place: the sunset as it might look, more vivid the better the evening ----------
   function mix(a, b, k) {
     const p = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
     const x = p(a), y = p(b);
-    return '#' + x.map((v, i) => Math.round(v + (y[i] - v) * k).toString(16).padStart(2, '0')).join('');
+    return '#' + x.map((v, i) => Math.round(v + (y[i] - v) * Math.max(0, Math.min(1, k))).toString(16).padStart(2, '0')).join('');
   }
-  function setSky(r) {
+  /** Relative luminance of a colour, 0 to 1. */
+  function lum(hex) {
+    const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+    const c = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+    return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]);
+  }
+  /** A colour no brighter than `max`, so white text over it stays readable. */
+  function dim(hex, max) { let h = hex; for (let i = 0; i < 12 && lum(h) > max; i++) h = mix(h, '#120E18', 0.12); return h; }
+  function rng(seed) {
+    let h = 1779033703;
+    for (const ch of String(seed)) h = Math.imul(h ^ ch.charCodeAt(0), 3432918353), h = (h << 13) | (h >>> 19);
+    return () => { h = Math.imul(h ^ (h >>> 16), 2246822507); h = Math.imul(h ^ (h >>> 13), 3266489909); h ^= h >>> 16; return (h >>> 0) / 4294967296; };
+  }
+  const SKY_DULL = ['#242834', '#30343F', '#444450', '#58545C', '#6C6560'];     // a flat, grey evening
+  const SKY_VIVID = ['#12164A', '#34206E', '#8A2877', '#D8472E', '#FFB13C'];    // deep blue through magenta to gold
+  const SKY_CLEAR = ['#0E1B48', '#1A2B62', '#34447F', '#A85F4F', '#F0B46C'];    // cloudless: a clean band of colour, low
+  const SKY_STOPS = [0, 0.46, 0.72, 0.9, 1];
+  /** The five colours of an evening's sky, top to horizon. The colour score sets how vivid they are. */
+  function skyStops(r) {
+    if (!r) return SKY_DULL.map((c, i) => mix(c, SKY_VIVID[i], 0.3));
+    const grey = !!r.cap, v = grey ? 0 : Math.min(1, r.parts.c * 1.15);
+    let stops = !grey && r.detail.canvas < 5 ? SKY_CLEAR.slice() : SKY_DULL.map((c, i) => mix(c, SKY_VIVID[i], v));
+    if (r.parts.a < 0.9) stops = stops.map((c) => mix(c, '#7A726C', (1 - r.parts.a) * 0.45));   // haze washes it toward grey
+    return stops;
+  }
+  /** [top, middle, horizon]: for swatches and the small scene in the Colour tile. */
+  function skyFor(r) { const s = skyStops(r); return [s[0], s[2], s[4]]; }
+
+  /** The scene, as two pictures: the sky with its glow and sun, and the clouds that drift across it.
+      Everything above the lowest fifth is kept dark enough for white text; the brightest colour sits at the horizon. */
+  function skyScene(r, x, seed) {
+    const stops = skyStops(r), rand = rng(seed || 'sky'), id = uid();
+    const grey = !!(r && r.cap), v = !r ? 0.3 : grey ? 0 : Math.min(1, r.parts.c * 1.15);
+    const s = r ? r.parts.s : 0.6, a = r ? r.parts.a : 1, lit = r ? r.detail.lit : 0.6, canvas = r ? r.detail.canvas : 0, low = x ? (x.low || 0) : 0;
+    const glow = grey ? 0 : (0.25 + 0.6 * v) * (0.35 + 0.65 * s);
+    const sun = !grey && s > 0.15 ? `<div class="sun" data-o="${(s * (0.55 + 0.45 * v)).toFixed(2)}"></div>` : '';
+    const base = `<svg viewBox="0 0 400 800" preserveAspectRatio="none" aria-hidden="true"><defs>
+      <linearGradient id="${id}a" x1="0" y1="0" x2="0" y2="1">${stops.map((c, i) => `<stop offset="${SKY_STOPS[i]}" stop-color="${c}"/>`).join('')}</linearGradient>
+      <radialGradient id="${id}b" cx="0.5" cy="0.935" r="0.6"><stop offset="0" stop-color="${mix(stops[4], '#FFE9B8', 0.5)}" stop-opacity="${glow.toFixed(2)}"/><stop offset="0.45" stop-color="${stops[4]}" stop-opacity="${(glow * 0.45).toFixed(2)}"/><stop offset="1" stop-color="${stops[3]}" stop-opacity="0"/></radialGradient>
+      <linearGradient id="${id}c" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#05040C" stop-opacity=".34"/><stop offset=".7" stop-color="#05040C" stop-opacity="0"/></linearGradient></defs>
+      <rect width="400" height="800" fill="url(#${id}a)"/><rect width="400" height="800" fill="url(#${id}b)"/><rect width="400" height="800" fill="url(#${id}c)"/></svg>${sun}`;
+
+    // Clouds: long, soft bands, dusky on top and lit from below. Higher ones are deeper in colour; the lowest glow.
+    const n = canvas < 5 ? 0 : canvas < 30 ? 5 : canvas <= 70 ? 9 : 13;
+    let bands = '';
+    for (let i = 0; i < n; i++) {
+      const y = 60 + (i + rand() * 0.8) * (620 / n), f = y / 800, cx = rand() * 400, rx = 70 + rand() * 120, ry = 7 + rand() * 12;
+      const body = dim(mix(mix('#3A3B50', '#4E2A6A', v), mix('#6A6066', '#A8345E', v), f), f < 0.82 ? 0.075 : 0.3);
+      const under = dim(mix(body, mix(mix('#6A6878', '#D04E86', v), mix('#A0907F', '#FF9A42', v), f), 0.35 + 0.65 * lit), f < 0.82 ? 0.115 : 0.6);
+      // A band is a few overlapping wisps, each lit along its underside.
+      for (let k = 0; k < 3; k++) {
+        const ox = (k - 1) * rx * (0.5 + rand() * 0.3), oy = (rand() - 0.5) * ry * 1.4, w = rx * (0.55 + rand() * 0.4), h = ry * (0.6 + rand() * 0.6);
+        bands += `<ellipse cx="${(cx + ox).toFixed(0)}" cy="${(y + oy).toFixed(0)}" rx="${w.toFixed(0)}" ry="${h.toFixed(0)}" fill="${body}" opacity=".72"/><ellipse cx="${(cx + ox + 6).toFixed(0)}" cy="${(y + oy + h * 0.6).toFixed(0)}" rx="${(w * 0.88).toFixed(0)}" ry="${(h * 0.5).toFixed(0)}" fill="${under}" opacity=".9"/>`;
+      }
+    }
+    const bank = low >= 30 ? `<ellipse cx="200" cy="812" rx="340" ry="${(36 + low * 0.9).toFixed(0)}" fill="${mix('#2A2A33', '#3D2A45', v)}" opacity="${Math.min(0.95, 0.5 + low / 150).toFixed(2)}"/>` : '';
+    const haze = a < 0.9 ? `<rect width="400" height="800" fill="#A69A90" opacity="${((1 - a) * 0.3).toFixed(2)}"/>` : '';
+    let rain = '';
+    if (r && (r.cap === 'rain' || r.cap === 'snow' || r.cap === 'thunder')) {
+      for (let i = 0; i < 46; i++) { const rx = rand() * 420, ry = rand() * 800, len = r.cap === 'snow' ? 2 : 16 + rand() * 12; rain += `<path d="M${rx.toFixed(0)} ${ry.toFixed(0)}l${r.cap === 'snow' ? 0 : -5} ${len.toFixed(0)}" stroke="#DCE6F5" stroke-width="${r.cap === 'snow' ? 3 : 1.2}" stroke-linecap="round" opacity="${(0.1 + rand() * 0.16).toFixed(2)}"/>`; }
+    }
+    const fog = r && r.cap === 'fog' ? '<rect width="400" height="800" fill="#8E8E96" opacity=".3"/>' : '';
+    const clouds = `<svg class="clouds" viewBox="0 0 400 800" preserveAspectRatio="none" aria-hidden="true"><defs><filter id="${id}f" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="9"/></filter><filter id="${id}g" x="-30%" y="-60%" width="160%" height="220%"><feGaussianBlur stdDeviation="22"/></filter></defs>
+      <g filter="url(#${id}f)">${bands}</g><g filter="url(#${id}g)">${bank}</g>${haze}${fog}${rain}</svg>`;
+    return base + clouds;
+  }
+  /** Shows an evening's sky behind the screen, fading from the last one. */
+  let skyKey = null;
+  function setSky(r, x, seed) {
     const [t, m, b] = skyFor(r), st = document.documentElement.style;
     st.setProperty('--sky-top', t); st.setProperty('--sky-mid', m); st.setProperty('--sky-bottom', b);
+    const key = (r ? [r.colour, r.cap, Math.round(r.parts.s * 10), Math.round(r.parts.a * 10), Math.round(r.detail.canvas / 5), Math.round(r.detail.lit * 10), x ? Math.round((x.low || 0) / 10) : ''].join('|') : 'none') + '|' + (seed || '');
+    if (key === skyKey) return;
+    skyKey = key;
+    const sky = $('.sky'), layer = document.createElement('div');
+    layer.className = 'layer';
+    layer.innerHTML = skyScene(r, x, seed);
+    for (const el of $$('[data-o]', layer)) el.style.opacity = el.dataset.o;
+    sky.appendChild(layer);
+    requestAnimationFrame(() => requestAnimationFrame(() => layer.classList.add('in')));
+    setTimeout(() => { while (sky.children.length > 1 && sky.firstChild !== layer) sky.removeChild(sky.firstChild); }, 900);
   }
+  /** The evening a place's page is showing, and its sky. */
+  function shownEvening(p) { const evs = evenings(p), f = focusDay(p, evs); return evs[S.dayBy[p.id] == null ? f : S.dayBy[p.id]] || evs[f]; }
+  function skyOf(p) { const ev = shownEvening(p); setSky(ev.rating, ev.x, p.id + ev.date); }
 
   function toast(text, action, onAction) {
     const t = $('#toast');
@@ -327,7 +403,7 @@
       pager.scrollLeft = Math.max(0, S.places.findIndex((p) => p.id === S.current)) * pager.clientWidth;
       pager.addEventListener('scroll', onSwipe, { passive: true });
       const p = place();
-      if (p) setSky(shownRating(p));
+      if (p) skyOf(p);
     }
     drawBar(); drawBanner(); dyn(v);
     if (view && view.type === 'list') bindSearch();
@@ -346,7 +422,7 @@
     const top = pg.scrollTop;
     $('.inner', pg).innerHTML = pageHtml(p);
     dyn(pg); pg.scrollTop = top;
-    if (p.id === S.current) { setSky(shownRating(p)); drawBanner(); }
+    if (p.id === S.current) { skyOf(p); drawBanner(); }
   }
   /** A swipe has settled on (or is passing) another place: it becomes the current one. */
   let swipeFrame = 0;
@@ -358,7 +434,7 @@
       const p = S.places[Math.round(pager.scrollLeft / (pager.clientWidth || 1))];
       if (!p || p.id === S.current || S.view) return;
       S.current = p.id; store.set('current', p.id);
-      setSky(shownRating(p)); drawBar(); drawBanner();
+      skyOf(p); drawBar(); drawBanner();
       loadLogged(p).then(() => load(p)).then(() => update(p));
     });
   }
@@ -416,7 +492,7 @@
     return S.places.map((p) => {
       const evs = evenings(p), f = focusDay(p, evs), ev = evs[f], r = ev.rating, d = DATA[p.id] || {};
       const when = ev.times.sunset == null ? 'No sunset on this date' : `${f === 1 ? 'Tomorrow' : 'Tonight'} · sunset ${timeText(ev.times.sunset, p.tz)}`;
-      const right = r ? `<span class="rt" aria-hidden="true"><span class="big num">${scoreText(r)}</span>${colourHtml(r, true)}<span class="v ${r.verdict}">${ICON[r.verdict]}${r.verdictWord}</span></span>`
+      const right = r ? `<span class="rt" aria-hidden="true"><span class="big num">${scoreText(r)}</span>${colourHtml(r, true)}<span class="v ${r.verdict}">${icon(r)}${r.verdictWord}</span></span>`
         : `<span class="rt muted small">${d.error ? 'No forecast' : ev.times.state === 'none' ? '' : '…'}</span>`;
       return `<div class="lrow-wrap"><button type="button" class="lrow card" data-act="goto" data-id="${esc(p.id)}"${r ? ` aria-label="${esc(p.name)}. ${esc(spoken(f === 1 ? 'Tomorrow' : 'Tonight', r))}"` : ''}>
         <span class="swatch" data-sky="${skyFor(r).join(',')}" aria-hidden="true"></span>
@@ -430,7 +506,7 @@
     const cols = evenings(real[0]).slice(0, 6);
     const head = `<tr><th class="p">Place</th>${cols.map((e) => `<th>${esc(e.day === 0 ? 'Today' : dayName(e.date))}</th>`).join('')}</tr>`;
     const rows = real.map((q) => `<tr><th class="p" scope="row">${esc(q.name)}</th>${evenings(q).slice(0, 6).map((e) => (e.rating
-      ? `<td><button type="button" data-act="cell" data-id="${esc(q.id)}" data-day="${e.day}" aria-label="${esc(q.name)}, ${esc(spoken(e.day === 0 ? 'Today' : dayName(e.date, true), e.rating))}"><span>${scoreText(e.rating)}</span><span class="v ${e.rating.verdict}">${ICON[e.rating.verdict]}</span></button></td>`
+      ? `<td><button type="button" data-act="cell" data-id="${esc(q.id)}" data-day="${e.day}" aria-label="${esc(q.name)}, ${esc(spoken(e.day === 0 ? 'Today' : dayName(e.date, true), e.rating))}"><span>${scoreText(e.rating)}</span><span class="v ${e.rating.verdict}">${icon(e.rating)}</span></button></td>`
       : `<td><span class="muted small">${DATA[q.id] && DATA[q.id].error ? '!' : '–'}</span></td>`)).join('')}</tr>`).join('');
     return `<div class="grid-scroll"><table class="cmp">${head}${rows}</table></div><p class="small muted" data-gap>Stars out of 5 for each evening. Tap a cell to open that place and evening.</p>`;
   }
@@ -457,7 +533,7 @@
   let uidSeq = 0;
   const uid = () => 'g' + (++uidSeq);
   /** The sun against the horizon at one moment of the evening: `y` is its centre, 12 on the horizon. */
-  const sunGlyph = (y, on) => `<svg viewBox="0 0 28 24" aria-hidden="true">${on ? `<circle cx="14" cy="${y}" r="5" fill="#F4B860"/>` : `<circle cx="14" cy="${y}" r="4.300" fill="none" stroke="rgba(244,184,96,.75)" stroke-width="1.400" stroke-dasharray="2 2"/>`}<path d="M2 13h24" stroke="rgba(255,255,255,.8)" stroke-width="1.500" stroke-linecap="round"/></svg>`;
+  const sunGlyph = (name) => use(name);
   /** The evening, as Two Degrees shows the next 24 hours: one line about it, then a column for each moment. */
   function eveningCard(ev, p) {
     const t = ev.times, r = ev.rating, f = (ms) => (ms == null ? '–' : esc(timeText(ms, p.tz))), all = t.state === 'twilight';
@@ -465,7 +541,7 @@
     const line = r ? esc(r.reason) : all ? 'Twilight lasts all night at this time of year.' : 'The best colour often comes after the sun is down.';
     return `<section class="card"><p class="eyebrow">${TI.clock}<span>The evening</span><span class="sp"></span><span class="aside">Sets to the ${esc(compass(t.azimuth))}</span></p>
       <p class="summary">${line}</p>${r ? deltaLine(p, ev) : ''}<hr class="rule">
-      <div class="times">${col('Golden', f(t.goldenStart), sunGlyph(3, true))}${col('Best light', f(t.bestStart), sunGlyph(7, true))}${col('Sunset', f(t.sunset), sunGlyph(12.500, true), ' sun')}${col('Afterglow', all ? 'All night' : f(t.afterglowEnd), sunGlyph(17, false))}${col('Last light', all ? '–' : f(t.lastLight), sunGlyph(19.500, false))}</div>
+      <div class="times">${col('Golden', f(t.goldenStart), sunGlyph('sun'))}${col('Best light', f(t.bestStart), sunGlyph('sun-low'))}${col('Sunset', f(t.sunset), sunGlyph('sunset-down'), ' sun')}${col('Afterglow', all ? 'All night' : f(t.afterglowEnd), sunGlyph('afterglow'))}${col('Last light', all ? '–' : f(t.lastLight), sunGlyph('moon-stars'))}</div>
       <p class="small muted" data-gap>${all ? 'It never gets fully dark.' : 'Stay through the afterglow: the best colour often comes after the sun is down.'}</p></section>`;
   }
 
@@ -605,7 +681,7 @@
         <div class="score${stale ? ' stale' : ''}" aria-hidden="true"><span class="n">${scoreText(r)}</span><span class="of">/ 5</span></div>
         <div aria-hidden="true">${stars(r.tier === 'outlook' ? r.shown : r.score, r.tier === 'outlook')}</div>
         <p class="cond colour c-${r.colourClass.toLowerCase()}" aria-hidden="true"><b>${r.colourClass}</b> colour <span class="n num">· ${r.colour}</span></p>
-        <p class="hilo verdict ${r.verdict}" aria-hidden="true">${ICON[r.verdict]}<span>${r.verdictWord}${r.qualifier ? `<span class="q">, ${esc(r.qualifier)}</span>` : ''}</span></p>
+        <p class="hilo verdict ${r.verdict}" aria-hidden="true">${icon(r)}<span>${r.verdictWord}${r.qualifier ? `<span class="q">, ${esc(r.qualifier)}</span>` : ''}</span></p>
         <p class="hilo other range" aria-hidden="true">${r.tier === 'outlook' ? 'Outlook' : r.tier === 'forecast' ? 'Forecast' : 'Tonight'} · ${rangeText(r)} (typical)</p>
         ${stale ? '<p class="hilo other">Out of date. Reconnect to refresh.</p>' : ''}
       </section>`;
@@ -684,7 +760,7 @@
     if (!ev.rating) return `<div class="day none">${d}<span class="why">${ev.day > 5 ? 'Too early to call' : 'No forecast yet'}</span><span class="hi"><span>Sunset ${sunset}</span></span></div>`;
     const r = ev.rating, out = r.tier === 'outlook', cls = r.colourClass.toLowerCase();
     return `<button type="button" class="day${out ? ' outlook' : ''}${shown && shown.date === ev.date ? ' on' : ''}" data-act="day" data-day="${ev.day}" aria-label="${esc(spoken(label, r))}">${d}
-      <span class="ic v ${r.verdict}" aria-hidden="true">${ICON[r.verdict]}<small>${r.verdictWord}</small></span>
+      <span class="ic v ${r.verdict}" aria-hidden="true">${icon(r)}<small>${r.verdictWord}</small></span>
       <span class="sc num" aria-hidden="true">${scoreText(r)}</span>
       <span class="cbar" aria-hidden="true"><i class="f-${cls}" data-w="${Math.max(3, r.colour)}"></i></span>
       <span class="hi" aria-hidden="true"><b class="c-${cls}">${r.colourClass}</b><span>${sunset}</span></span></button>`;
@@ -743,7 +819,7 @@
 
   function planView() {
     const dr = S.view.draft, mo = planModel(dr), tz = mo.tz;
-    setSky(mo.r);
+    setSky(mo.r, mo.ev && mo.ev.x, (mo.p ? mo.p.id : 'plan') + dr.date);
     const saved = !!dr.saved, past = mo.pt && now() > mo.pt.headBackBy + 6 * HOUR;
     const dayLabel = `${dayName(dr.date, true)} ${dateText(dr.date)}`;
     const score = mo.r ? `<span class="row">${stars(mo.r.tier === 'outlook' ? mo.r.shown : mo.r.score, mo.r.tier === 'outlook', true)}<b class="num">${scoreText(mo.r)}</b>${colourHtml(mo.r, true)}<span class="v ${mo.r.verdict}">${mo.r.verdictWord}</span><span class="small muted">${esc(mo.r.reason)}</span></span>` : '<span class="small muted">No rating for this evening yet.</span>';
@@ -793,7 +869,7 @@
   // ---------- The shared plan (read-only) ----------
   function sharedView() {
     const v = S.view;
-    setSky(v.live || null);
+    setSky(v.live || null, null, 'shared');
     if (!v.plan) return `<section class="card"><p class="eyebrow">Golden Hour</p><p>This plan link is incomplete. Ask for it again.</p><div class="row" data-gap><a class="btn" href="./">Open Golden Hour</a></div></section>`;
     const pl = v.plan, tz = tzOr(pl.tz), [y, m, d] = ymd(pl.date);
     const times = G.eveningTimes(G.solarNoonGuess(y, m + 1, d, pl.spot.lon), pl.spot.lat, pl.spot.lon);

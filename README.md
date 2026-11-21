@@ -13,7 +13,7 @@ leave, what to bring, and when to head home. It is in the same family as
 [Two Degrees](https://github.com/bradleycowdrey/two-degrees) and
 [Bearings](https://github.com/bradleycowdrey/bearings), and shows imperial and metric side by side.
 
-This is **Release 1** of the plan in [docs/SPEC.md](docs/SPEC.md). Version 0.5.0.
+This is **Release 1** of the plan in [docs/SPEC.md](docs/SPEC.md). Version 0.6.0.
 
 ## What it does
 
@@ -24,6 +24,8 @@ This is **Release 1** of the plan in [docs/SPEC.md](docs/SPEC.md). Version 0.5.0
   Skip), a range and one plain sentence of why. Tap to see the four parts behind the score.
 - **A page for each place, swiped between**, as in Two Degrees on the iPhone: each on its own evening's
   sky, with a dot for each place and a list of them all.
+- **The sky behind each place is its sunset.** A picture of the evening as it might look, drawn from the
+  forecast: the better the sunset, the more vivid the screen, with drifting clouds lit from below.
 - **Laid out as Two Degrees lays out a city**: the reading on the sky in thin, large type; one line an
   evening with a bar for its colour; and a tile, with its own graphic, for every input to the score: colour,
   cloud cover, cloud toward the sunset, air clarity, visibility, wind, feels like, rain, humidity, the sunset
