@@ -196,7 +196,11 @@
   }
 
   // ---------- The four parts and the score (sections 4.2 and 4.3) ----------
-  const WEIGHTS = { c: 0.40, s: 0.20, a: 0.20, k: 0.20 };
+  // Colour in the clouds is the point, so it carries most of the score; the rest only shade it.
+  const WEIGHTS = { c: 0.70, s: 0.10, a: 0.10, k: 0.10 };
+  /** The colour class: a name for the colour score (0 to 1), richest first. */
+  const COLOUR_CLASSES = [[0.85, 'Brilliant'], [0.65, 'Rich'], [0.45, 'Warm'], [0.25, 'Soft'], [0, 'Muted']];
+  function colourClass(c) { return COLOUR_CLASSES.find(([min]) => c >= min)[1]; }
   const isThunder = (c) => c >= 95 && c <= 99;
   const isFog = (c) => c === 45 || c === 48;
   const isSnow = (c) => (c >= 71 && c <= 77) || c === 85 || c === 86;
@@ -214,16 +218,17 @@
     const lit = 1 - clamp((blockC - 20) / 60);
     const canvas = Math.max(x.mid || 0, x.high || 0);
     let canvasTerm;
-    if (canvas < 5) canvasTerm = 0.3;
-    else if (canvas < 30) canvasTerm = 0.3 + 0.7 * (canvas - 5) / 25;
+    if (canvas < 5) canvasTerm = 0.1;                     // a cloudless sky has nothing to catch the colour
+    else if (canvas < 30) canvasTerm = 0.1 + 0.9 * (canvas - 5) / 25;
     else if (canvas <= 70) canvasTerm = 1;
     else canvasTerm = 1 - 0.8 * clamp((canvas - 70) / 30) * clamp((blockC - 10) / 40);
-    const c = canvasTerm * (1 - low / 100) * (0.4 + 0.6 * lit);
-
     let a;
     if (x.aod != null) a = x.aod <= 0.15 ? 1 : x.aod <= 0.6 ? 1 - 0.8 * (x.aod - 0.15) / 0.45 : x.aod < 1 ? 0.2 * (1 - (x.aod - 0.6) / 0.4) : 0;
     else a = x.visibility == null ? 1 : clamp((x.visibility - 5000) / 25000);
     a = Math.max(0, a - 0.15 * clamp(((x.humidity == null ? 0 : x.humidity) - 75) / 20));
+    // Colour: cloud to catch the light, no low cloud in front of it, light that can reach it, and air
+    // clean enough not to wash it out.
+    const c = canvasTerm * (1 - low / 100) * (0.4 + 0.6 * lit) * (0.7 + 0.3 * a);
 
     const w = feltWind(x.wind, x.gusts);
     const wind = 1 - clamp((w - 3.5) / 5.5);
@@ -297,7 +302,7 @@
     if ((x.codes || []).some(isThunder)) warnings.push({ id: 'thunder', text: 'Thunderstorms forecast. Avoid exposed ground.' });
     if (x.aqi != null && x.aqi > 150) warnings.push({ id: 'air', text: 'Air quality is unhealthy this evening.' });
     return {
-      parts: { c: p.c, s: p.s, a: p.a, k: p.k }, detail: p, gate, cap, score, shown, range, lo, hi, tier, verdict,
+      parts: { c: p.c, s: p.s, a: p.a, k: p.k }, colour: Math.round(p.c * 100), colourClass: colourClass(p.c), detail: p, gate, cap, score, shown, range, lo, hi, tier, verdict,
       verdictWord: VERDICT_WORD[verdict], qualifier, smoke, warnings,
       reason: reason(x, p, cap, smoke, !!o.imperialFirst),
     };
@@ -315,7 +320,7 @@
     if (p.s < 0.4) s = 'Cloud to the west will likely hide the sun';
     else if (p.c >= 0.8 && p.s >= 0.6) s = 'High cloud should catch the colour; clear to the west';
     else if (p.c >= 0.6 && p.s < 0.6) s = 'Colour likely overhead, though the sun may slip behind cloud';
-    else if (p.canvas < 5) s = 'Clear sky: a clean sunset with little colour';
+    else if (p.canvas < 5) s = 'Clear sky: no cloud to catch the colour';
     else if ((x.low || 0) >= 40) s = 'Low cloud may block some of it';
     else if (p.canvas > 70) s = 'A thick cloud layer may mute it';
     else s = 'Some cloud to catch a little colour';
@@ -532,7 +537,7 @@
   const api = {
     clamp, normalize, sunPosition, moonPosition, moonPhase, astroRefraction, distance, bearing, destination,
     solarNoonGuess, eveningTimes, bracket, interp, larger, both, inputsAt, normals, dayOfYear, eveningNormal,
-    WEIGHTS, feltWind, parts, capReason, tierOf, verdictOf, rate, reason,
+    WEIGHTS, COLOUR_CLASSES, colourClass, feltWind, parts, capReason, tierOf, verdictOf, rate, reason,
     tempText, windText, distanceText, prefersImperial, cToF,
     travelMinutes, bufferMinutes, planTimes, bringList, mergeItems, moonAt,
     toBase64Url, fromBase64Url, encodePlan, decodePlan, MAX_LINK, ics, fold, sampleForecast,

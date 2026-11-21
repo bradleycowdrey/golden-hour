@@ -23,6 +23,7 @@ test('golden vectors: parts, gate, stars and verdict', () => {
     near(r.gate, v.gate, 0.006, `${v.name}: gate`);
     assert.equal(r.score, v.stars, `${v.name}: stars`);
     assert.equal(r.verdict, v.verdict, `${v.name}: verdict`);
+    assert.equal(r.colourClass, v.class, `${v.name}: colour class`);
   }
 });
 
@@ -36,8 +37,10 @@ test('sun visible and colour at their thresholds', () => {
   assert.equal(p({}, { 3: { mid: 100 } }).s, 1, 'cloud at 300 km does not hide the sun');
   near(p({ high: 50 }, { 2: { low: 100 } }).c, 0.4, 1e-9, 'but it shades the cloud overhead');
   near(p({ high: 50 }, { 3: { high: 100 } }).c, 0.4 + 0.6 * (1 - 10 / 60), 1e-9, '30% of high cloud at 300 km');
-  near(p({ high: 4 }).c, 0.3, 1e-9);
-  near(p({ high: 17.5 }).c, 0.65, 1e-9);
+  near(p({ high: 4 }).c, 0.1, 1e-9, 'a cloudless sky has nothing to catch the colour');
+  near(p({ high: 17.5 }).c, 0.55, 1e-9);
+  near(p({ high: 50, aod: 0.6 }).c, 0.76, 1e-9, 'haze washes the colour out');
+  assert.deepEqual([1, 0.85, 0.7, 0.5, 0.3, 0.1].map(G.colourClass), ['Brilliant', 'Brilliant', 'Rich', 'Warm', 'Soft', 'Muted']);
   near(p({ mid: 30 }).c, 1, 1e-9);
   near(p({ mid: 70 }).c, 1, 1e-9);
   near(p({ high: 100 }, { 0: { low: 50 } }).c, 0.2 * (0.4 + 0.6 * 0.5), 1e-9, 'a solid deck with no strip');
@@ -78,12 +81,14 @@ test('comfort: wind, gusts, temperature against the normal, rain', () => {
   assert.equal(k({ rainChance: 50 }).k, 1);
 });
 
-test('the gate: comfort and clean air never lift a dead sky, and cost at most a star', () => {
+test('colour dominates: comfort and clean air never lift a dead sky, and comfort costs at most half a star', () => {
   const dead = G.rate(make({ low: 100 }, { 0: { low: 80 }, 1: { low: 80 } }), { normal: 18 });
   assert.ok(dead.score <= 0.2, `dead sky scored ${dead.score}`);
   const calm = G.rate(make({ high: 50 }), { normal: 18 }).score;
   const rough = G.rate(make({ high: 50, wind: 20, apparent: -10 }), { normal: 18 }).score;
-  near(calm - rough, 1.0, 1e-9);
+  near(calm - rough, 0.5, 1e-9);
+  assert.equal(G.rate(make({}), { normal: 18 }).verdict, 'skip', 'a cloudless, clean, calm evening is not a Go');
+  assert.equal(G.WEIGHTS.c, 0.7);
 });
 
 test('caps at 1.5 stars', () => {
@@ -103,18 +108,18 @@ test('caps at 1.5 stars', () => {
 
 test('tiers, ranges and verdict qualifiers', () => {
   assert.deepEqual([0, 1, 2, 3, 5, 6].map(G.tierOf), ['tonight', 'forecast', 'forecast', 'outlook', 'outlook', 'none']);
-  const x = make({});                                         // 3.6
+  const x = make({ mid: 20 });                                 // 3.7
   const t = G.rate(x, { day: 0, normal: 18 });
-  assert.deepEqual([t.range, t.lo, t.hi, t.qualifier], [0.5, 3.1, 4.1, 'could slip to Maybe']);
+  assert.deepEqual([t.range, t.lo, t.hi, t.qualifier], [0.5, 3.2, 4.2, 'could slip to Maybe']);
   const f = G.rate(x, { day: 2, normal: 18 });
-  assert.deepEqual([f.range, f.lo, f.hi], [0.8, 2.8, 4.4]);
+  assert.deepEqual([f.range, f.lo, f.hi], [0.8, 2.9, 4.5]);
   const o = G.rate(x, { day: 4, normal: 18 });
   assert.deepEqual([o.range, o.shown, o.qualifier], [1.2, 3.5, 'may change']);
   assert.equal(G.rate(x, { day: 0, normal: 18, spotType: 'water' }).range, 0.8, 'coast and summits are harder to call');
   assert.equal(G.rate(make({ high: 50 }), { day: 0, normal: 18 }).qualifier, '', 'a 5.0 tonight stays a Go');
   assert.equal(G.rate(make({ high: 50 }), { day: 0, normal: 18 }).hi, 5, 'the range stops at 5');
-  assert.equal(G.rate(make({ high: 95 }, { 3: { low: 60 } }), { day: 0, normal: 18 }).qualifier, 'could reach Go');   // 3.3
-  assert.equal(G.rate(make({ high: 50 }, { 1: { low: 80 } }), { day: 1, normal: 18 }).qualifier, 'could reach Maybe'); // 1.9 ± 0.8
+  assert.equal(G.rate(make({ mid: 15 }), { day: 0, normal: 18 }).qualifier, 'could reach Go');   // 3.1
+  assert.equal(G.rate(make({ high: 50 }, { 1: { low: 80 } }), { day: 1, normal: 18 }).qualifier, 'could reach Maybe'); // 2.3 ± 0.8
   assert.equal(G.rate(make({ codes: [95, 95] }), { day: 0, normal: 18 }).qualifier, '', 'capped evenings get no qualifier');
 });
 
@@ -128,7 +133,7 @@ test('reason sentences and warnings', () => {
   assert.equal(r({ pm25: 60, aod: 0.7, high: 50 }).reason, 'Smoky: a red sun, muted sky.');
   assert.equal(r({ high: 50 }, { 0: { low: 80 } }).reason, 'Cloud to the west will likely hide the sun.');
   assert.equal(r({ high: 50 }).reason, 'High cloud should catch the colour; clear to the west.');
-  assert.equal(r({}).reason, 'Clear sky: a clean sunset with little colour.');
+  assert.equal(r({}).reason, 'Clear sky: no cloud to catch the colour.');
   assert.equal(r({ low: 45, mid: 20 }).reason, 'Low cloud may block some of it.');
   assert.equal(r({ high: 95 }, { 3: { low: 60 } }).reason, 'A thick cloud layer may mute it.');
   assert.equal(r({ mid: 15 }).reason, 'Some cloud to catch a little colour.');

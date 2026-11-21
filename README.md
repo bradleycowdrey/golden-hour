@@ -13,13 +13,15 @@ leave, what to bring, and when to head home. It is in the same family as
 [Two Degrees](https://github.com/bradleycowdrey/two-degrees) and
 [Bearings](https://github.com/bradleycowdrey/bearings), and shows imperial and metric side by side.
 
-This is **Release 1** of the plan in [docs/SPEC.md](docs/SPEC.md). Version 0.1.0.
+This is **Release 1** of the plan in [docs/SPEC.md](docs/SPEC.md). Version 0.2.0.
 
 ## What it does
 
-- **A star rating for each evening**, with a verdict (Go, Maybe, Skip), a range, and one plain sentence of
-  why. It reads cloud at three heights here and up to 300 km toward the sunset, haze, wind and how the
-  temperature compares with what is usual for the place. Tap to see the four parts behind the score.
+- **A star rating for each evening, led by colour.** Colour in the clouds is 70% of the score and gets
+  its own class under the stars: Brilliant, Rich, Warm, Soft or Muted. A cloudless evening is not a Go.
+  It reads cloud at three heights here and up to 300 km toward the sunset, haze, wind and how the
+  temperature compares with what is usual for the place. Each evening also has a verdict (Go, Maybe,
+  Skip), a range and one plain sentence of why. Tap to see the four parts behind the score.
 - **The evening's times**: golden hour, the best window, sunset, the afterglow and last light.
 - **The week**: six rated evenings, the best one marked, and four more with their sunset times. Days three
   to five are an outlook; beyond that it says "Too early to call".

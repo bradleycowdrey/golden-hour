@@ -4,7 +4,7 @@
 (function () {
   'use strict';
   const G = window.GH;
-  const VERSION = '0.1.0';
+  const VERSION = '0.2.0';
   const MIN = 60000, HOUR = 3600000, DAY = 86400000;
   const $ = (sel, el) => (el || document).querySelector(sel);
   const $$ = (sel, el) => Array.from((el || document).querySelectorAll(sel));
@@ -249,7 +249,9 @@
   const verdictHtml = (r, withQ) => `<span class="verdict ${r.verdict}">${ICON[r.verdict]}<span>${r.verdictWord}${withQ && r.qualifier ? `<span class="q">, ${esc(r.qualifier)}</span>` : ''}</span></span>`;
   const scoreText = (r) => (r.tier === 'outlook' ? r.shown.toFixed(1) : r.score.toFixed(1));
   const rangeText = (r) => `likely ${r.lo.toFixed(1)} to ${r.hi.toFixed(1)}`;
-  const spoken = (label, r) => `${label}. ${scoreText(r)} out of 5 stars, ${rangeText(r)}. ${r.verdictWord}${r.qualifier ? ', ' + r.qualifier : ''}. ${r.reason}`;
+  const spoken = (label, r) => `${label}. ${scoreText(r)} out of 5 stars, ${rangeText(r)}. ${r.colourClass} colour, ${r.colour} out of 100. ${r.verdictWord}${r.qualifier ? ', ' + r.qualifier : ''}. ${r.reason}`;
+  /** The colour class: the name for how rich the colour in the clouds should be, with its score out of 100. */
+  const colourHtml = (r, small) => `<span class="colour${small ? ' sm' : ''} c-${r.colourClass.toLowerCase()}"><span class="k">Colour</span><b>${r.colourClass}</b><span class="n num">${r.colour}</span></span>`;
   function evLabel(ev, p, evs) {
     const f = focusDay(p, evs);
     if (ev.day === 0) return 'Tonight';
@@ -367,11 +369,11 @@
     const row = (name, v, weight, why) => `<div class="part"><span class="name">${name} <span class="muted small">${weight}</span></span><span class="val">${pct(v)}%</span><span class="bar"><i data-w="${pct(v)}"></i></span><span class="why">${why}</span></div>`;
     const aq = x.aod != null ? `haze ${x.aod.toFixed(2)} (aerosol depth)` : x.visibility != null ? `visibility ${dist(x.visibility / 1000)}` : 'no reading';
     return `<details class="card parts"><summary>What’s behind the score</summary>
-      ${row('Colour', r.parts.c, '40%', `${Math.round(p.canvas)}% mid and high cloud overhead, ${Math.round(x.low || 0)}% low cloud; ${Math.round(p.blockC)}% cloud in the light’s path to the west`)}
-      ${row('Seeing the sun set', r.parts.s, '20%', `${Math.round(p.blockS)}% cloud between here and the sun at the horizon`)}
-      ${row('Air clarity', r.parts.a, '20%', `${aq}; humidity ${Math.round(x.humidity || 0)}%`)}
-      ${row('Comfort', r.parts.k, '20%', `wind ${wind(p.w)}; feels like ${x.apparent == null ? '–' : temp(x.apparent)}${p.normal != null ? `, usual ${temp(p.normal)}` : ''}; ${Math.round(x.rainChance || 0)}% chance of rain`)}
-      <p class="small muted">Clean air and comfort only count when there is a sky worth watching${r.gate < 0.995 ? ` (counted at ${pct(r.gate)}% this evening)` : ''}.${r.cap ? ' Capped at 1.5 stars.' : ''}</p></details>`;
+      ${row(`Colour · ${r.colourClass}`, r.parts.c, '70%', `${Math.round(p.canvas)}% mid and high cloud overhead, ${Math.round(x.low || 0)}% low cloud; ${Math.round(p.blockC)}% cloud in the light’s path to the west`)}
+      ${row('Seeing the sun set', r.parts.s, '10%', `${Math.round(p.blockS)}% cloud between here and the sun at the horizon`)}
+      ${row('Air clarity', r.parts.a, '10%', `${aq}; humidity ${Math.round(x.humidity || 0)}%`)}
+      ${row('Comfort', r.parts.k, '10%', `wind ${wind(p.w)}; feels like ${x.apparent == null ? '–' : temp(x.apparent)}${p.normal != null ? `, usual ${temp(p.normal)}` : ''}; ${Math.round(x.rainChance || 0)}% chance of rain`)}
+      <p class="small muted">Colour in the clouds is most of the score. Clean air and comfort only count when there is a sky worth watching${r.gate < 0.995 ? ` (counted at ${pct(r.gate)}% this evening)` : ''}.${r.cap ? ' Capped at 1.5 stars.' : ''}</p></details>`;
   }
 
   function deltaLine(p, ev) {
@@ -399,6 +401,7 @@
       hero = `<section class="hero" aria-label="${esc(spoken(label, r))}">${head}
         <div class="score${stale ? ' stale' : ''}" aria-hidden="true"><span class="n">${scoreText(r)}</span><span class="of">/ 5</span></div>
         <div aria-hidden="true">${stars(r.tier === 'outlook' ? r.shown : r.score, r.tier === 'outlook')}</div>
+        <div aria-hidden="true" class="classline">${colourHtml(r)}</div>
         <div aria-hidden="true">${verdictHtml(r, true)}</div>
         <p class="range" aria-hidden="true">${r.tier === 'outlook' ? 'Outlook' : r.tier === 'forecast' ? 'Forecast' : 'Tonight'} · ${rangeText(r)} <span class="muted">(typical)</span></p>
         <p class="reason" aria-hidden="true">${esc(r.reason)}</p>
@@ -477,7 +480,7 @@
     const r = ev.rating, out = r.tier === 'outlook';
     const badge = best && best.ev.date === ev.date ? ` <span class="best">${best.label}</span>` : '';
     return `<button type="button" class="day" data-act="day" data-day="${ev.day}" aria-label="${esc(spoken(label, r))}">${d}
-      <span class="mid" aria-hidden="true"><span class="line1">${stars(out ? r.shown : r.score, out, true)}<span class="sc">${scoreText(r)}</span>${badge}</span>
+      <span class="mid" aria-hidden="true"><span class="line1">${stars(out ? r.shown : r.score, out, true)}<span class="sc">${scoreText(r)}</span>${colourHtml(r, true)}${badge}</span>
       <span class="why">${out ? `${rangeText(r)} · ` : ''}${esc(r.reason)}</span></span>
       <span class="right" aria-hidden="true"><span class="v ${r.verdict}">${ICON[r.verdict]}${r.verdictWord}</span>${sunset}</span></button>`;
   }
@@ -561,7 +564,7 @@
     setSky(mo.r);
     const saved = !!dr.saved, past = mo.pt && now() > mo.pt.headBackBy + 6 * HOUR;
     const dayLabel = `${dayName(dr.date, true)} ${dateText(dr.date)}`;
-    const score = mo.r ? `<span class="row">${stars(mo.r.tier === 'outlook' ? mo.r.shown : mo.r.score, mo.r.tier === 'outlook', true)}<b class="num">${scoreText(mo.r)}</b><span class="v ${mo.r.verdict}">${mo.r.verdictWord}</span><span class="small muted">${esc(mo.r.reason)}</span></span>` : '<span class="small muted">No rating for this evening yet.</span>';
+    const score = mo.r ? `<span class="row">${stars(mo.r.tier === 'outlook' ? mo.r.shown : mo.r.score, mo.r.tier === 'outlook', true)}<b class="num">${scoreText(mo.r)}</b>${colourHtml(mo.r, true)}<span class="v ${mo.r.verdict}">${mo.r.verdictWord}</span><span class="small muted">${esc(mo.r.reason)}</span></span>` : '<span class="small muted">No rating for this evening yet.</span>';
     const far = mo.hasPin && mo.p && G.distance(mo.p.lat, mo.p.lon, dr.spot.lat, dr.spot.lon) > 15000;
     const head = `<button type="button" class="btn quiet back" data-act="close-view">‹ ${saved ? 'Plans' : 'Back'}</button>
       <section class="hero"><p class="when">${esc(dayLabel)}</p><h2>${esc(dr.spot.name || 'A new plan')}</h2>
@@ -617,7 +620,7 @@
     const names = Array.from(groups.keys()).sort((a, b) => (a === '' ? 1 : b === '' ? -1 : a.localeCompare(b)));
     const live = v.live;
     const dropped = live && pl.scoreAtSave != null && pl.scoreAtSave >= 3.5 && live.verdict !== 'go';
-    const scoreLine = live ? `<span class="row">${stars(live.tier === 'outlook' ? live.shown : live.score, live.tier === 'outlook', true)}<b class="num">${scoreText(live)}</b><span class="v ${live.verdict}">${live.verdictWord}</span><span class="small muted">${esc(live.reason)}</span></span>`
+    const scoreLine = live ? `<span class="row">${stars(live.tier === 'outlook' ? live.shown : live.score, live.tier === 'outlook', true)}<b class="num">${scoreText(live)}</b>${colourHtml(live, true)}<span class="v ${live.verdict}">${live.verdictWord}</span><span class="small muted">${esc(live.reason)}</span></span>`
       : pl.scoreAtSave != null ? `<span class="small muted">Rated ${pl.scoreAtSave.toFixed(1)} of 5 when this plan was made.</span>` : '';
     return `<section class="hero"><p class="when">${esc(dayName(pl.date, true))} ${esc(dateText(pl.date))}</p><h2>${esc(pl.spot.name || 'Sunset')}</h2><p class="tagline">A sunset plan, shared with you</p></section>
       ${dropped ? `<div class="warn" role="note">${ICON.warn}<span>The forecast has dropped since this plan was made. Check with whoever sent you this.</span></div>` : ''}

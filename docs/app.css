@@ -25,7 +25,7 @@ body { margin: 0; color: var(--text); font: 400 16px/1.4 var(--font); letter-spa
   padding: max(12px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) calc(var(--tabs-h) + 28px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); }
 /* The sky: fixed, so the page scrolls over it. Dark through the top half, where text sits straight on it;
    the glow is low, where only cards (with their scrim) pass over it. */
-.sky { position: fixed; inset: 0; z-index: -1; background: linear-gradient(var(--sky-top) 0%, var(--sky-top) 30%, var(--sky-mid) 68%, var(--sky-bottom) 100%); transition: opacity .4s; }
+.sky { position: fixed; inset: 0; z-index: -1; background: linear-gradient(var(--sky-top) 0%, var(--sky-top) 40%, var(--sky-mid) 80%, var(--sky-bottom) 100%); transition: opacity .4s; }
 button, input, select { font: inherit; color: inherit; }
 button { cursor: pointer; }
 a { color: inherit; }
@@ -256,3 +256,16 @@ table.cmp td button:hover { background: var(--fill-strong); }
 @media (min-width: 900px) { .two { display: grid; } }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; scroll-behavior: auto !important; } }
 [data-gap] { margin-top: 12px; }
+
+/* The colour class: the name for how rich the colour in the clouds should be. It leads, after the stars. */
+.classline { margin-top: 10px; }
+.colour { display: inline-flex; align-items: baseline; gap: 10px; padding: 9px 18px; border-radius: 980px; background: rgba(18,15,13,.72); text-shadow: none; white-space: nowrap; }
+.colour .k { font-size: 13px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--t85); }
+.colour b { font-size: 22px; font-weight: 600; letter-spacing: .01em; }
+.colour .n { font-size: 15px; font-weight: 500; color: var(--t85); }
+.colour.c-brilliant b { color: #FFC56B; } .colour.c-rich b { color: #F4B860; } .colour.c-warm b { color: #F0C9A0; }
+.colour.c-soft b { color: #E6DCD0; } .colour.c-muted b { color: #CFC8BE; }
+.colour.sm { padding: 3px 10px; gap: 6px; background: rgba(255,255,255,.1); }
+.colour.sm .k { display: none; }
+.colour.sm b { font-size: 14px; }
+.colour.sm .n { font-size: 13px; }

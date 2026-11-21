@@ -1,6 +1,6 @@
 # Golden Hour: plan and spec
 
-Version 7. An app by Bradley Cowdrey, in the same family as Two Degrees, Bearings and Meridian. Items marked **(verify)** come from memory or secondary sources
+Version 8. An app by Bradley Cowdrey, in the same family as Two Degrees, Bearings and Meridian. Items marked **(verify)** come from memory or secondary sources
 and must be checked against primary documentation before they are relied on.
 
 **How to read this.** Sections 1 to 3 and 12 to 15 are the plan: what it is, the order of work, how
@@ -132,26 +132,18 @@ hour has it. Comfort inputs use sunset plus 30 minutes.
 
 ### 4.2 The four parts (each 0 to 1)
 
+The goal is colour in the clouds. Colour therefore carries 70% of the score, and the other three
+parts 10% each. A cloudless evening, however clean and calm, is not a Go. (Owner decision, replacing
+the earlier 40/20/20/20 split.)
+
 `clamp(x)` limits x to the range 0 to 1.
 
-**Sun visible (S), weight 20%.** Can you watch the sun reach the horizon?
+**Sun visible (S), weight 10%.** Can you watch the sun reach the horizon?
 
 - `blockS` = the largest of: `cloud_cover_low` at P50 and P100; 0.5 × `cloud_cover_mid` at P200.
 - S = 1 − clamp((blockS − 20) / 60).
 
-**Colour (C), weight 40%.** Is there cloud to catch the light, and can the light reach it?
-
-- `blockC` = the largest of: `cloud_cover_low` at P50, P100, P200 and P300; 0.5 × `cloud_cover_mid`
-  at P200 and P300; 0.3 × `cloud_cover_high` at P200 and P300 (a thick cirrus shield ahead of a
-  front dims the light; the 0.3 is a starting value to tune).
-- `lit` = 1 − clamp((blockC − 20) / 60).
-- `canvas` = the larger of `cloud_cover_mid` and `cloud_cover_high` at P0.
-- `canvasTerm` = 0.3 when canvas < 5; rises linearly from 0.3 to 1.0 between 5 and 30; 1.0 from 30
-  to 70; above 70 it is 1 − 0.8 × clamp((canvas − 70) / 30) × clamp((blockC − 10) / 40). A solid
-  deck with a clear strip toward the sun keeps full marks; a solid deck with no strip falls to 0.2.
-- C = canvasTerm × (1 − `cloud_cover_low` at P0 / 100) × (0.4 + 0.6 × lit).
-
-**Air clarity (A), weight 20%.**
+**Air clarity (A), weight 10%.**
 
 - With aerosol optical depth `aod`: A = 1.0 when aod ≤ 0.15; falls linearly to 0.2 at 0.6; falls
   linearly to 0 at 1.0.
@@ -159,7 +151,32 @@ hour has it. Comfort inputs use sunset plus 30 minutes.
   A = clamp((`visibility` − 5000) / 25000).
 - In both cases subtract 0.15 × clamp((`relative_humidity_2m` − 75) / 20). Floor at 0.
 
-**Comfort (K), weight 20%.** K = (0.6 × wind + 0.4 × temp) × rain.
+**Colour (C), weight 70%.** Is there cloud to catch the light, can the light reach it, and is the
+air clean enough not to wash it out?
+
+- `blockC` = the largest of: `cloud_cover_low` at P50, P100, P200 and P300; 0.5 × `cloud_cover_mid`
+  at P200 and P300; 0.3 × `cloud_cover_high` at P200 and P300 (a thick cirrus shield ahead of a
+  front dims the light; the 0.3 is a starting value to tune).
+- `lit` = 1 − clamp((blockC − 20) / 60).
+- `canvas` = the larger of `cloud_cover_mid` and `cloud_cover_high` at P0.
+- `canvasTerm` = 0.1 when canvas < 5 (nothing to catch the colour); rises linearly from 0.1 to 1.0
+  between 5 and 30; 1.0 from 30 to 70; above 70 it is
+  1 − 0.8 × clamp((canvas − 70) / 30) × clamp((blockC − 10) / 40). A solid deck with a clear strip
+  toward the sun keeps full marks; a solid deck with no strip falls to 0.2.
+- C = canvasTerm × (1 − `cloud_cover_low` at P0 / 100) × (0.4 + 0.6 × lit) × (0.7 + 0.3 × A).
+
+**The colour class.** C is shown as a score out of 100 with a name, directly under the stars and
+beside every score in the app:
+
+| Colour score | Class |
+| --- | --- |
+| 85 to 100 | Brilliant |
+| 65 to 84 | Rich |
+| 45 to 64 | Warm |
+| 25 to 44 | Soft |
+| 0 to 24 | Muted |
+
+**Comfort (K), weight 10%.** K = (0.6 × wind + 0.4 × temp) × rain.
 
 - `w` = the larger of `wind_speed_10m` and 0.7 × `wind_gusts_10m`, in m/s.
 - wind = 1 − clamp((w − 3.5) / 5.5). Full marks at or under 3.5 m/s (8 mph), zero at 9 m/s (20 mph).
@@ -173,40 +190,34 @@ hour has it. Comfort inputs use sunset plus 30 minutes.
 
 ### 4.3 The score
 
-- sky = 0.40 C + 0.20 S.
+- sky = 0.70 C + 0.10 S.
 - gate = clamp(sky / 0.30).
-- **score = 5 × (sky + gate × (0.20 A + 0.20 K))**, rounded to one decimal.
+- **score = 5 × (sky + gate × (0.10 A + 0.10 K))**, rounded to one decimal.
 - The gate means clean air and a pleasant evening only count when there is a sky worth watching.
-  This bounds the owner's decision to include comfort: comfort can take away at most 1.0 star and
-  can never lift a dead sky.
+  Comfort can take away at most half a star and can never lift a dead sky.
 - **Cap at 1.5** when any of these holds at sunset: `precipitation` ≥ 0.2 mm with `weather_code`
   51 to 67, 71 to 77, 85 or 86; fog (45 or 48); thunderstorm (95 to 99); or `cloud_cover_low` ≥ 85
   at P0, P50 and P100. Rain showers (80 to 82) are not capped: broken showers can give the best
   skies.
-- The four parts are always available on tap, with their inputs, so a reader can see the sky on its
-  own.
+- The four parts are always available on tap, with their inputs.
 
-Worked examples, used as golden test vectors. Unless a row says otherwise: humidity is 75% or
-less, gusts are no more than 12.8 m/s, and there is no cloud at the upstream points.
+Worked examples, used as golden test vectors (`tests/fixtures/vectors.json`). Unless a row says
+otherwise: humidity is 75% or less, gusts are no more than 12.8 m/s, and there is no cloud at the
+upstream points.
 
-| Evening | C | S | A | K | gate | Stars |
-| --- | --- | --- | --- | --- | --- | --- |
-| 50% high cloud, clear to the west, clean air, calm, normal temperature | 1.00 | 1.0 | 1.0 | 1.0 | 1.00 | 5.0 |
-| Cloudless, clean, calm | 0.30 | 1.0 | 1.0 | 1.0 | 1.00 | 3.6 |
-| Row 1 with wind at 9 m/s | 1.00 | 1.0 | 1.0 | 0.4 | 1.00 | 4.4 |
-| 50% high cloud, 80% low cloud 100 km to the west | 0.40 | 0.0 | 1.0 | 1.0 | 0.53 | 1.9 |
-| Hazy (aod 0.6), 40% mid cloud, calm | 1.00 | 1.0 | 0.2 | 1.0 | 1.00 | 4.2 |
-| 84% low cloud everywhere, clean, calm | 0.02 | 0.0 | 1.0 | 1.0 | 0.03 | 0.1 |
-| 95% high cloud, clear strip to the west | 1.00 | 1.0 | 1.0 | 1.0 | 1.00 | 5.0 |
-| 95% high cloud, 60% low cloud 300 km to the west | 0.20 | 1.0 | 1.0 | 1.0 | 0.93 | 3.3 |
+| Evening | C | Class | S | A | K | gate | Stars |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 50% high cloud, clear to the west, clean air, calm, normal temperature | 1.00 | Brilliant | 1.0 | 1.0 | 1.0 | 1.00 | 5.0 |
+| Cloudless, clean, calm | 0.10 | Muted | 1.0 | 1.0 | 1.0 | 0.57 | 1.4 |
+| Row 1 with wind at 9 m/s | 1.00 | Brilliant | 1.0 | 1.0 | 0.4 | 1.00 | 4.7 |
+| 50% high cloud, 80% low cloud 100 km to the west | 0.40 | Soft | 0.0 | 1.0 | 1.0 | 0.93 | 2.3 |
+| Hazy (aod 0.6), 40% mid cloud, calm | 0.76 | Rich | 1.0 | 0.2 | 1.0 | 1.00 | 3.8 |
+| 84% low cloud everywhere, clean, calm | 0.01 | Muted | 0.0 | 1.0 | 1.0 | 0.01 | 0.0 |
+| 95% high cloud, clear strip to the west | 1.00 | Brilliant | 1.0 | 1.0 | 1.0 | 1.00 | 5.0 |
+| 95% high cloud, 60% low cloud 300 km to the west | 0.20 | Muted | 1.0 | 1.0 | 1.0 | 0.80 | 2.0 |
 
-Known tuning candidates for the first hindcast: heavy haze costs only 0.8 stars (row 5); a
-cloudless evening is a Go at 3.6 (row 2, decision 6 in section 15); and temp compares a feels-like
-temperature with an air-temperature normal, which biases windy and humid places.
-
-**Dissent recorded.** The sunset-science review argued comfort should not be in the stars at all,
-because no published sunset model mixes it in. The owner's decision is a composite that includes
-it. The gate and the parts-on-tap view are the compromise.
+Tuning candidates for the first hindcast: the 0.7 + 0.3 × A haze term; where the class boundaries
+sit; and temp comparing a feels-like temperature with an air-temperature normal.
 
 ### 4.4 Verdict, lead time and ranges
 
@@ -259,7 +270,7 @@ is appended after a semicolon when one applies. Capped rows take no modifier.
 | S < 0.4 | Cloud to the west will likely hide the sun. |
 | C ≥ 0.8 and S ≥ 0.6 | High cloud should catch the colour; clear to the west. |
 | C ≥ 0.6 and S < 0.6 | Colour likely overhead, though the sun may slip behind cloud. |
-| canvas < 5 | Clear sky: a clean sunset with little colour. |
+| canvas < 5 | Clear sky: no cloud to catch the colour. |
 | Low cloud at P0 ≥ 40 | Low cloud may block some of it. |
 | canvas > 70 | A thick cloud layer may mute it. |
 | Otherwise | Some cloud to catch a little colour. |
@@ -538,7 +549,7 @@ Bottom tab bar on phones; two columns from 900 px wide. Release 1 tabs: **Tonigh
 Release 2 adds **Spots**.
 
 1. **Tonight.** Place chips at the top (as in Two Degrees). The evening's sky as the background.
-   The score as a large numeral with five proportionally filled stars, the verdict, the range, the
+   The score as a large numeral with five proportionally filled stars, the colour class, the verdict, the range, the
    reason, any warning, and a times strip (golden hour, best window, sunset, afterglow, last
    light). "Up 0.6 since this morning" when known. The four parts open on tap. A "Plan this
    evening" button.
@@ -775,8 +786,8 @@ chooses to send.
 | 2 | Create the public repository `bradleycowdrey/golden-hour` and attach it to the build session | Bradley | Before R1 build starts |
 | 3 | Add a Golden Hour page to bradcowdrey.com and a line to the profile's list of free apps | Bradley | Before R1 launch; does not block the build |
 | 4 | Confirm "relative to the location" means the sky at that place and direction, and temperature against the local normal | Owner | Assumed; revisit at the hindcast |
-| 5 | Confirm 40/20/20/20 as the starting weights | Owner | Assumed; tuned at the hindcast |
-| 6 | Should a cloudless, clean, calm evening be a Go (3.6 as specified) or a Maybe? | Owner | At the hindcast |
+| 5 | Weights are 70/10/10/10, colour first | Owner | Decided; fine-tuned at the hindcast |
+| 6 | A cloudless evening is not a Go: it scores 1.4 | Owner | Decided |
 
 ## 16. Release 1 as built: where it differs from this document
 

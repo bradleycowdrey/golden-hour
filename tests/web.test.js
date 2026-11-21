@@ -131,7 +131,7 @@ const server = http.createServer((req, res) => {
     const worst = await page.evaluate(() => {
       const hex = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
       const css = getComputedStyle(document.documentElement);
-      const stops = [[0, hex(css.getPropertyValue('--sky-top').trim())], [0.3, hex(css.getPropertyValue('--sky-top').trim())], [0.68, hex(css.getPropertyValue('--sky-mid').trim())], [1, hex(css.getPropertyValue('--sky-bottom').trim())]];
+      const stops = [[0, hex(css.getPropertyValue('--sky-top').trim())], [0.4, hex(css.getPropertyValue('--sky-top').trim())], [0.8, hex(css.getPropertyValue('--sky-mid').trim())], [1, hex(css.getPropertyValue('--sky-bottom').trim())]];
       const skyAt = (f) => { for (let i = 1; i < stops.length; i++) if (f <= stops[i][0]) { const [a, ca] = stops[i - 1], [b, cb] = stops[i], k = (f - a) / (b - a || 1); return ca.map((v, j) => v + (cb[j] - v) * k); } return stops[3][1]; };
       const rgba = (s) => { const m = s.match(/[\d.]+/g).map(Number); return { c: m.slice(0, 3), a: m.length > 3 ? m[3] : 1 }; };
       const over = (top, a, under) => top.map((v, i) => v * a + under[i] * (1 - a));
@@ -188,8 +188,9 @@ const server = http.createServer((req, res) => {
     check((await text(page, '.verdict')).startsWith(r.verdictWord) && await page.locator('.verdict svg').count() === 1, 'the verdict has a word and an icon, not just a colour');
     check((await text(page, '.hero .range')).includes(`likely ${r.lo.toFixed(1)} to ${r.hi.toFixed(1)}`), 'the range is shown, labelled typical');
     check(await text(page, '.hero .reason') === r.reason, 'the reason sentence');
+    check((await text(page, '.hero .colour')).replace(/\s+/g, ' ') === `COLOUR ${r.colourClass} ${r.colour}`, `the colour class leads, after the stars (${r.colourClass}, ${r.colour})`);
     const label = await page.locator('.hero').getAttribute('aria-label');
-    check(label === `Tonight. ${r.score.toFixed(1)} out of 5 stars, likely ${r.lo.toFixed(1)} to ${r.hi.toFixed(1)}. ${r.verdictWord}${r.qualifier ? ', ' + r.qualifier : ''}. ${r.reason}`, 'screen readers get one sentence; the stars are hidden from them');
+    check(label === `Tonight. ${r.score.toFixed(1)} out of 5 stars, likely ${r.lo.toFixed(1)} to ${r.hi.toFixed(1)}. ${r.colourClass} colour, ${r.colour} out of 100. ${r.verdictWord}${r.qualifier ? ', ' + r.qualifier : ''}. ${r.reason}`, 'screen readers get one sentence; the stars are hidden from them');
     check(await page.locator('.hero .stars').getAttribute('aria-hidden') === 'true', 'star glyphs are hidden from assistive technology');
     const fill = await page.locator('.hero .stars .fill').evaluate((el) => el.getBoundingClientRect().width / el.parentElement.getBoundingClientRect().width);
     check(Math.abs(fill - r.score / 5) < 0.01, 'stars are filled in proportion to the score');
