@@ -295,6 +295,8 @@
   const screen = (html) => `<div class="screen"><div class="inner">${html}</div></div>`;
   function dyn(root) {
     for (const el of $$('[data-w]', root)) el.style.width = el.dataset.w + '%';
+    for (const el of $$('[data-l]', root)) el.style.left = el.dataset.l + '%';
+    for (const el of $$('[data-h]', root)) el.style.height = el.dataset.h + '%';
     for (const el of $$('[data-sky]', root)) { const [t, m, b] = el.dataset.sky.split(','); el.style.background = `linear-gradient(${t}, ${m} 60%, ${b})`; }
   }
   /** The rating of the evening a place's page is showing. */
@@ -464,16 +466,86 @@
     </div>`;
   }
 
-  function partsCard(ev) {
-    const r = ev.rating, x = ev.x, p = r.detail, pct = (v) => Math.round(v * 100);
-    const row = (name, v, weight, why) => `<div class="part"><span class="name">${name} <span class="muted small">${weight}</span></span><span class="val">${pct(v)}%</span><span class="bar"><i data-w="${pct(v)}"></i></span><span class="why">${why}</span></div>`;
-    const aq = x.aod != null ? `haze ${x.aod.toFixed(2)} (aerosol depth)` : x.visibility != null ? `visibility ${dist(x.visibility / 1000)}` : 'no reading';
-    return `<details class="card parts"><summary>What’s behind the score</summary>
-      ${row(`Colour · ${r.colourClass}`, r.parts.c, '70%', `${Math.round(p.canvas)}% mid and high cloud overhead, ${Math.round(x.low || 0)}% low cloud; ${Math.round(p.blockC)}% cloud in the light’s path to the west`)}
-      ${row('Seeing the sun set', r.parts.s, '10%', `${Math.round(p.blockS)}% cloud between here and the sun at the horizon`)}
-      ${row('Air clarity', r.parts.a, '10%', `${aq}; humidity ${Math.round(x.humidity || 0)}%`)}
-      ${row('Comfort', r.parts.k, '10%', `wind ${wind(p.w)}; feels like ${x.apparent == null ? '–' : temp(x.apparent)}${p.normal != null ? `, usual ${temp(p.normal)}` : ''}; ${Math.round(x.rainChance || 0)}% chance of rain`)}
-      <p class="small muted">Colour in the clouds is most of the score. Clean air and comfort only count when there is a sky worth watching${r.gate < 0.995 ? ` (counted at ${pct(r.gate)}% this evening)` : ''}.${r.cap ? ' Capped at 1.5 stars.' : ''}</p></details>`;
+  // ---------- The tiles: every input to the score, each on its own, as in Two Degrees ----------
+  const TI = {
+    colour: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17h18M6 17a6 6 0 0 1 12 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M12 4v3M4.500 9.500l2 2M19.500 9.500l-2 2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+    cloud: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 19a5 5 0 0 1-.600-9.960A6 6 0 0 1 18 10.500 4.300 4.300 0 0 1 17.500 19z" fill="currentColor"/></svg>',
+    west: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12H5M10 6l-6 6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    air: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8h11a3 3 0 1 0-3-3M3 12h16a3 3 0 1 1-3 3M3 16h8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+    wind: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9h10a3 3 0 1 0-3-3M3 15h14a3 3 0 1 1-3 3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+    temp: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4a2 2 0 0 1 4 0v9.500a4.500 4.500 0 1 1-4 0z" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="17.500" r="2" fill="currentColor"/></svg>',
+    rain: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3s6 6.500 6 11a6 6 0 0 1-12 0c0-4.500 6-11 6-11z" fill="currentColor"/></svg>',
+    damp: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3s6 6.500 6 11a6 6 0 0 1-12 0c0-4.500 6-11 6-11z" fill="none" stroke="currentColor" stroke-width="2"/></svg>',
+    sun: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.500" fill="currentColor"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+    moon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.500A8 8 0 0 1 9.500 4a8 8 0 1 0 10.500 10.500z" fill="currentColor"/></svg>',
+  };
+  const POINTS = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
+  /** A compass with an arrow pointing where the sun sets. */
+  function compassSvg(deg) {
+    const ticks = [0, 45, 90, 135, 180, 225, 270, 315].map((a) => `<line x1="32" y1="${a % 90 ? 7 : 5}" x2="32" y2="10" transform="rotate(${a} 32 32)" stroke="rgba(255,255,255,${a % 90 ? 0.35 : 0.7})" stroke-width="1.500" stroke-linecap="round"/>`).join('');
+    return `<svg class="compass" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="27" fill="none" stroke="rgba(255,255,255,.22)" stroke-width="1.500"/>${ticks}
+      <g transform="rotate(${deg.toFixed(0)} 32 32)"><path d="M32 12l6 13h-4.500v18h-3V25H26z" fill="var(--acc)"/></g><circle cx="32" cy="32" r="2.500" fill="#fff"/></svg>`;
+  }
+  /** The moon as it is lit: phase 0 new, 0.25 first quarter, 0.5 full, 0.75 last quarter. */
+  function moonSvg(phase) {
+    const r = 15, k = Math.cos(phase * 2 * Math.PI), waxing = phase < 0.5, rx = Math.abs(k) * r;
+    // The lit side is a half disc; the terminator is half an ellipse that adds to it (gibbous) or cuts into it (crescent).
+    const lit = `M18 3 A${r} ${r} 0 0 ${waxing ? 1 : 0} 18 33 A${rx.toFixed(2)} ${r} 0 0 ${(k > 0) === waxing ? 0 : 1} 18 3z`;
+    return `<svg class="moon" viewBox="0 0 36 36" aria-hidden="true"><circle cx="18" cy="18" r="${r}" fill="rgba(255,255,255,.14)"/><path d="${lit}" fill="#E9DCC8"/></svg>`;
+  }
+  const tile = (cls, icon, title, value, sub, gfx, note, words) => `<section class="card dt a-${cls}" aria-label="${esc(title)}"><p class="eyebrow">${icon}<span>${esc(title)}</span></p>
+    <p class="dv${words ? ' words' : ''}">${value}</p>${sub ? `<p class="ds">${sub}</p>` : ''}${gfx ? `<div class="gfx">${gfx}</div>` : ''}${note ? `<p class="dn">${note}</p>` : ''}</section>`;
+  const sbar = (cls, pct) => `<div class="sbar ${cls}"><u data-l="${Math.max(0, Math.min(100, pct)).toFixed(0)}"></u></div>`;
+
+  function tilesHtml(ev, p) {
+    const r = ev.rating, x = ev.x, t = ev.times, out = [];
+    if (r && x) {
+      const d = r.detail, pc = (v) => Math.round(v || 0);
+      // Colour: the class, the score out of 100, where it sits from Muted to Brilliant.
+      out.push(tile('colour', TI.colour, 'Colour', esc(r.colourClass), `${r.colour} of 100`, sbar('colourbar', r.colour), 'Colour in the clouds is 70% of the score.', true));
+      // Cloud cover: the canvas. High, mid and low, each filled to its share.
+      const canvasWord = d.canvas < 5 ? 'None to catch it' : d.canvas < 30 ? 'A little' : d.canvas <= 70 ? 'Just right' : 'Heavy';
+      const layer = (name, v) => `<span>${name}</span><div><i data-w="${pc(v)}"></i></div><b class="num">${pc(v)}%</b>`;
+      out.push(tile('cloud', TI.cloud, 'Cloud cover', canvasWord, `${pc(d.canvas)}% mid and high cloud`, `<div class="clbars">${layer('High', x.high)}${layer('Mid', x.mid)}${layer('Low', x.low)}</div>`,
+        (x.low || 0) >= 40 ? 'Low cloud overhead hides the colour.' : 'High and mid cloud catch the light; low cloud blocks it.', true));
+      // Toward the sunset: cloud in the light's path, 50 to 300 km out, and whether the sun itself will show.
+      const path = [0, 1, 2, 3].map((i) => Math.max(x.up[i] ? x.up[i].low : 0, i >= 2 && x.up[i] ? 0.5 * x.up[i].mid : 0, i >= 2 && x.up[i] ? 0.3 * x.up[i].high : 0));
+      const km = [50, 100, 200, 300];
+      out.push(tile('west', TI.west, 'Toward the sunset', r.parts.s >= 0.8 && d.lit >= 0.8 ? 'Open' : r.parts.s >= 0.4 ? 'Partly blocked' : 'Blocked', `Sun in view: ${pc(r.parts.s * 100)}%`,
+        `<div class="pbars">${path.map((v, i) => `<div class="b"><div class="col"><i data-h="${Math.max(4, pc(v))}"></i></div><span class="num">${settings.imperialFirst ? Math.round(km[i] / 1.609) : km[i]}</span></div>`).join('')}</div><p class="cap">Cloud in the light’s path, by ${settings.imperialFirst ? 'miles' : 'km'} out</p>`,
+        `Sun sets to the ${esc(compass(t.azimuth))}. 10% of the score.`, true));
+      // Air clarity.
+      const airWord = r.smoke ? 'Smoky' : r.parts.a >= 0.8 ? 'Clear' : r.parts.a >= 0.5 ? 'Light haze' : r.parts.a >= 0.2 ? 'Hazy' : 'Thick haze';
+      out.push(tile('air', TI.air, 'Air clarity', airWord, x.visibility != null ? `See ${dist(x.visibility / 1000)}` : '', sbar('airbar', r.parts.a * 100),
+        `${x.aod != null ? `Haze ${x.aod.toFixed(2)} (aerosol depth). ` : ''}Clean air keeps the colour vivid. 10% of the score.`, true));
+      // Wind.
+      const windWord = d.w <= 3.5 ? 'Calm' : d.w < 6.5 ? 'Breezy' : d.w < 9 ? 'Windy' : 'Very windy';
+      out.push(tile('wind', TI.wind, 'Wind', wind(x.wind || 0), `Gusts ${wind(x.gusts || 0)}`, sbar('windbar', (d.w / 12) * 100), `${windWord}. Low wind is best for sitting out.`));
+      // Feels like, against what is usual here.
+      if (x.apparent != null) {
+        const n = d.normal, diff = n == null ? null : x.apparent - n;
+        const word = diff == null ? '' : diff < -3 ? 'Cooler than usual' : diff > 4 ? 'Warmer than usual' : 'About usual';
+        const pos = diff == null ? 50 : 50 + Math.max(-12, Math.min(12, diff)) / 12 * 50;
+        out.push(tile('temp', TI.temp, 'Feels like', temp(x.apparent), n == null ? 'Half an hour after sunset' : `Usual: ${temp(n)}`,
+          n == null ? '' : `<div class="sbar tempbar"><s></s><u data-l="${pos.toFixed(0)}"></u></div>`, `${word ? word + ' for the time of year. ' : ''}Comfort is 10% of the score.`));
+      }
+      // Rain.
+      const showers = (x.codes || []).some((c) => c >= 80 && c <= 82);
+      out.push(tile('rain', TI.rain, 'Rain', `${pc(x.rainChance)}%`, (x.precipitation || 0) >= 0.1 ? `${x.precipitation.toFixed(1)} mm around sunset` : 'None expected at sunset', sbar('rainbar', x.rainChance || 0),
+        r.cap === 'rain' || r.cap === 'snow' ? 'Steady rain or snow caps the evening at 1.5 stars.' : showers ? 'Passing showers can leave the best skies.' : (x.rain12 || 0) >= 1 ? 'It rained earlier: the ground will be wet.' : 'Dry.'));
+      // Humidity.
+      out.push(tile('damp', TI.damp, 'Humidity', `${pc(x.humidity)}%`, '', sbar('dampbar', x.humidity || 0), (x.humidity || 0) > 85 ? 'Damp air mutes the reds and oranges.' : 'Dry enough for clean colour.'));
+    }
+    if (t.sunset != null) {
+      // Where and when the sun goes down.
+      out.push(tile('sun', TI.sun, 'Sunset', esc(timeText(t.sunset, p.tz)), `${POINTS[Math.round(G.normalize(t.azimuth) / 22.5) % 16]} · ${Math.round(t.azimuth)}°`, compassSvg(t.azimuth),
+        t.state === 'twilight' ? 'Twilight lasts all night.' : `Best light ${esc(timeText(t.bestStart, p.tz))} to ${esc(timeText(t.bestEnd, p.tz))}.`));
+      // The moon at last light.
+      const at = t.lastLight != null ? t.lastLight : t.sunset + 90 * MIN, m = G.moonAt(at, p.lat, p.lon), ph = G.moonPhase(at).phase;
+      out.push(tile('moon', TI.moon, 'Moon', esc(m.name), `${Math.round(m.fraction * 100)}% lit`, moonSvg(ph), m.up ? 'Up at last light, for the walk back.' : 'Not up at last light.', true));
+    }
+    return out.length ? `<section class="details" aria-label="What’s behind the score"><div class="dgrid">${out.join('')}</div>
+      ${r ? `<p class="small tilenote card">Clean air and comfort only count when there is a sky worth watching${r.gate < 0.995 ? ` (counted at ${Math.round(r.gate * 100)}% this evening)` : ''}.${r.cap ? ' This evening is capped at 1.5 stars.' : ''}</p>` : ''}</section>` : '';
   }
 
   function deltaLine(p, ev) {
@@ -520,7 +592,7 @@
     const best = bestOf(evs);
     const week = `<section class="card week"><p class="eyebrow">The next ten evenings</p>${evs.map((e) => dayRow(e, p, evs, best)).join('')}
       <p class="small muted" data-gap>Today and the next two evenings are a forecast. Days three to five are an outlook and may change. Beyond that it is too early to call.</p></section>`;
-    return `${back}<div class="two"><div class="col">${hero}${warns}${cta}${sample}</div><div class="col">${howWasIt(p, evs)}${timesCard}${week}${r ? partsCard(ev) : ''}</div></div>${footHtml()}`;
+    return `${back}<div class="two"><div class="col">${hero}${warns}${cta}${sample}</div><div class="col">${howWasIt(p, evs)}${timesCard}${week}</div></div>${tilesHtml(ev, p)}${footHtml()}`;
   }
   const compass = (deg) => ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'][Math.round(G.normalize(deg) / 45) % 8];
 

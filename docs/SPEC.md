@@ -1,6 +1,6 @@
 # Golden Hour: plan and spec
 
-Version 9. An app by Bradley Cowdrey, in the same family as Two Degrees, Bearings and Meridian. Items marked **(verify)** come from memory or secondary sources
+Version 10. An app by Bradley Cowdrey, in the same family as Two Degrees, Bearings and Meridian. Items marked **(verify)** come from memory or secondary sources
 and must be checked against primary documentation before they are relied on.
 
 **How to read this.** Sections 1 to 3 and 12 to 15 are the plan: what it is, the order of work, how
@@ -554,7 +554,13 @@ replaces the earlier Tonight, Week and Plans tabs.)
    and keeps its position. From top to bottom: the evening's name and the place; the score as a
    large numeral with five proportionally filled stars; the colour class; the verdict; the range;
    the reason; any warning; "Plan this evening"; the times strip; **the next ten evenings** (six
-   rated, four "Too early to call", the best one badged); and the four parts behind the score.
+   rated, four "Too early to call", the best one badged); and **the tiles**.
+   The tiles follow Two Degrees: two across on a phone, three then five where there is room, each a
+   frosted card with its own quiet accent, a title with an icon, a large reading, a small graphic and
+   one line of what it means. Every input to the score has its own tile: Colour (class, score out of
+   100, a scale from Muted to Brilliant), Cloud cover (high, mid and low), Toward the sunset (cloud
+   in the light's path at four distances, and how much of the sun will show), Air clarity, Wind,
+   Feels like (against the usual), Rain, Humidity, Sunset (time and compass direction) and Moon.
    Tapping one of the ten evenings shows it at the top of the page, with a way back to tonight.
 2. **The bottom bar.** Plans on the left, a dot for each place in the middle (an arrow for the
    current location; a count such as "3 of 12" beyond seven places), and Places on the right.
