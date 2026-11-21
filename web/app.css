@@ -11,9 +11,9 @@
   color-scheme: dark;
   --sky-top: #1B2440; --sky-mid: #3A3550; --sky-bottom: #6B4A4A;   /* set per evening, from its forecast */
   --bg: #1A1816; --ink: #15181E;
-  --text: #FFFFFF; --t85: rgba(255,255,255,.86); --t70: rgba(255,255,255,.74);
-  --hair: rgba(255,255,255,.2); --fill: rgba(255,255,255,.14); --fill-strong: rgba(255,255,255,.24);
-  --card: rgba(22,19,17,.66);
+  --text: #FFFFFF; --t85: rgba(255,255,255,.88); --t70: rgba(255,255,255,.78);
+  --hair: rgba(255,255,255,.2); --fill: rgba(255,255,255,.11); --fill-strong: rgba(255,255,255,.24);
+  --card: rgba(40,38,42,.66);
   --amber: #F4B860; --cream: #FFF1E5; --muted: #B0A898; --alert: #FFB4A8;
   --font: Inter, -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
   --tabs-h: 64px;
@@ -130,11 +130,6 @@ h1, h2, h3, p { margin: 0; }
 .stars.sm svg { width: 90px; height: 18px; }
 
 /* Times: a strip of the five moments. */
-.times { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; text-align: center; }
-.times .t { font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.times .l { font-size: 13px; color: var(--t70); line-height: 1.25; }
-.times .sun .t { color: var(--amber); }
-@media (max-width: 480px) { .times { grid-template-columns: repeat(3, 1fr); row-gap: 12px; } .times .t { font-size: 16px; } }
 
 /* The four parts */
 details.parts > summary { display: flex; align-items: center; gap: 8px; min-height: 44px; margin: -8px 0; list-style: none; cursor: pointer; font-size: 15px; font-weight: 600; }
@@ -150,22 +145,7 @@ details.parts[open] > summary::after { transform: rotate(225deg); }
 .part .why { grid-column: 1 / -1; font-size: 13px; color: var(--t70); }
 
 /* Week */
-.day { display: grid; grid-template-columns: 92px 1fr auto; gap: 2px 12px; align-items: center; width: 100%; min-height: 64px; padding: 10px 4px; border: 0; background: none; text-align: left; border-radius: 12px; }
-.day + .day { border-top: .5px solid var(--hair); border-radius: 0; }
-button.day:hover { background: rgba(255,255,255,.07); }
-.day .d { font-size: 16px; font-weight: 600; }
-.day .d small { display: block; font-size: 13px; font-weight: 400; color: var(--t70); }
-.day .mid { display: contents; }
-.day .line1 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
-.day .sc { font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.day .why { grid-column: 2 / -1; font-size: 13px; color: var(--t70); overflow-wrap: anywhere; }
-div.day .why { grid-column: 2; }
-.day .right { text-align: right; white-space: nowrap; }
-.day .right .v { display: inline-flex; align-items: center; gap: 5px; font-size: 14px; font-weight: 600; }
-.day .right .v svg { width: 16px; height: 16px; }
-.day .right .s { display: block; font-size: 13px; color: var(--t70); font-variant-numeric: tabular-nums; }
 .v.go { color: var(--amber); } .v.maybe { color: var(--cream); } .v.skip { color: #D2CCC2; }
-.best { font-size: 13px; font-weight: 600; padding: 2px 8px; border-radius: 6px; background: var(--amber); color: #2A1B05; white-space: nowrap; }
 .tog { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 4px; border: 0; background: none; font-size: 14px; font-weight: 500; color: var(--t85); }
 .tog i { width: 40px; height: 24px; border-radius: 12px; background: var(--fill-strong); position: relative; flex: none; }
 .tog i::after { content: ""; position: absolute; top: 2px; left: 2px; width: 20px; height: 20px; border-radius: 50%; background: #fff; transition: transform .15s; }
@@ -292,72 +272,152 @@ table.cmp td button:hover { background: var(--fill-strong); }
 .colour .k { font-size: 13px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--t85); }
 .colour b { font-size: 22px; font-weight: 600; letter-spacing: .01em; }
 .colour .n { font-size: 15px; font-weight: 500; color: var(--t85); }
-.colour.c-brilliant b { color: #FFC56B; } .colour.c-rich b { color: #F4B860; } .colour.c-warm b { color: #F0C9A0; }
+.colour.c-brilliant b { color: #FFD591; } .colour.c-rich b { color: #FFD08A; } .colour.c-warm b { color: #F0C9A0; }
 .colour.c-soft b { color: #E6DCD0; } .colour.c-muted b { color: #CFC8BE; }
 .colour.sm { padding: 3px 10px; gap: 6px; background: rgba(0,0,0,.34); }
 .colour.sm .k { display: none; }
 .colour.sm b { font-size: 14px; }
 .colour.sm .n { font-size: 13px; }
 
-/* Detail tiles, after Two Degrees: two across (three, then four, where there's room), the same frosted card,
-   each with its own quiet accent on its title and as a faint glow at the top. One input to the score each. */
+
+
+
+/* ============ The Two Degrees pass ============
+   Everything below follows the Two Degrees web app's own rules: the reading straight on the sky in thin, large
+   type; frosted cards with an icon and a quiet uppercase title; one line a day with a bar on a shared scale;
+   detail tiles two across, each with its own accent, reading, graphic and one line of meaning. */
+.card { padding: 14px; border-radius: 16px; }
+.eyebrow { gap: 6px; margin: 0 0 10px; font-size: 13px; font-weight: 600; line-height: 16px; letter-spacing: .01em; text-transform: uppercase; color: var(--t70); }
+.eyebrow > svg { width: 14px; height: 14px; flex: none; }
+.rule { margin: 10px 0; border-top: .5px solid var(--hair); }
+.btn.white { min-height: 44px; padding: 0 20px; font-size: 15px; }
+.ask h3 { font-size: 17px; font-weight: 600; margin: 0 0 6px; }
+.ask p { font-size: 15px; color: var(--t85); line-height: 1.45; }
+
+/* The reading: centred, the place, the score in thin large type with "/ 5" beside it, then what it means. */
+.hero { container-type: inline-size; padding: 26px 0 18px; text-align: center; text-shadow: 0 1px 8px rgba(0,0,0,.3); }
+.hero h2 { margin: 0; font-size: 34px; font-weight: 400; line-height: 1.2; letter-spacing: -.015em; overflow-wrap: anywhere; }
+.hero .when { display: block; font-size: 13px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--t85); }
+.score { display: flex; justify-content: center; align-items: baseline; column-gap: 8px; margin: 2px 0 0; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.score .n { font-size: 96px; font-size: min(108px, 29cqw); font-weight: 200; line-height: 1.1; letter-spacing: -.02em; }
+.score .of { font-size: 34px; font-size: min(44px, 12cqw); font-weight: 300; color: inherit; opacity: .72; }
+.hero .stars { margin: 0 0 8px; }
+.hero .cond { margin: 0; font-size: 20px; font-weight: 500; line-height: 1.3; }
+.hero .cond.colour { display: block; padding: 0; background: none; border-radius: 0; white-space: normal; }
+.hero .cond.colour b { font-size: inherit; font-weight: 600; }
+.hero .cond.colour .n { font-size: inherit; font-weight: 500; color: inherit; opacity: .8; }
+.hero .cond.colour.c-brilliant b, .hero .cond.colour.c-rich b { color: #FFE3B5; }
+.hero .cond.colour.c-warm b { color: #FBD9B4; } .hero .cond.colour.c-soft b, .hero .cond.colour.c-muted b { color: #fff; }
+.hilo { display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 0 8px; margin: 0; font-size: 20px; font-weight: 500; line-height: 1.3; }
+.hilo.verdict { padding: 0; margin: 0; background: none; border-radius: 0; text-shadow: inherit; color: #fff; }
+.hilo.verdict svg { width: 20px; height: 20px; }
+.hilo.verdict.go svg { color: #FFD08A; }
+.hilo.verdict .q { font-weight: 500; color: inherit; opacity: .88; }
+.hilo.other { font-size: 15px; font-weight: 400; opacity: .88; }
+.hero .none { font-size: 34px; font-weight: 300; padding: 18px 0 6px; }
+.cta { padding: 2px 0 10px; }
+
+/* The evening: one line about it, then a column for each moment, as the next 24 hours are shown. */
+.summary { margin: 0; font-size: 16px; text-wrap: balance; }
+.delta { margin-top: 4px; font-size: 13px; color: var(--t70); }
+.times { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.hour { display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 0; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.hour .h { font-size: 13px; font-weight: 600; line-height: 18px; color: var(--t85); }
+.hour .ic svg { display: block; width: 30px; height: 26px; }
+.hour .f { font-size: 16px; font-weight: 500; line-height: 22px; }
+.hour.sun .h, .hour.sun .f { color: #FFD08A; }
+@media (max-width: 400px) { .hour .f { font-size: 14px; } .hour .h { font-size: 13px; letter-spacing: -.02em; } }
+
+/* Ten evenings: one line each, the colour on one shared scale. Each row is a button: it shows that evening above. */
+.daily { container-type: inline-size; }
+.daily .eyebrow { margin-bottom: 8px; }
+.days { display: flex; flex-direction: column; }
+.day { display: grid; grid-template-columns: 58px 48px 36px minmax(0, 1fr) 76px; align-items: center; gap: 10px; width: 100%; min-height: 52px; margin: 0; padding: 4px 0;
+  border: 0; border-top: .5px solid var(--hair); border-radius: 0; background: none; color: inherit; text-align: left; font-variant-numeric: tabular-nums; }
+.day .d { display: flex; flex-direction: column; font-size: 18px; font-weight: 500; line-height: 1.15; white-space: nowrap; }
+.day .d .best { font-size: 13px; font-weight: 600; color: #FFD08A; }
+.day .ic { display: flex; flex-direction: column; align-items: center; gap: 1px; }
+.day .ic svg { width: 24px; height: 24px; }
+.day .ic small { font-size: 13px; font-weight: 600; line-height: 1; }
+.day .sc { font-size: 17px; font-weight: 500; text-align: right; }
+.day .hi { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.2; white-space: nowrap; }
+.day .hi b { font-size: 16px; font-weight: 500; }
+.day .hi span { font-size: 13px; color: var(--t70); }
+.day .why { grid-column: 2 / span 3; font-size: 15px; color: var(--t70); }
+.day.outlook .sc, .day.outlook .hi b { opacity: .78; }
+.day.outlook .cbar i { opacity: .55; }
+.day.on .d { color: #FFD08A; }
+@media (hover: hover) { button.day:hover .d { opacity: .8; } }
+.cbar { position: relative; height: 5px; border-radius: 5px; background: rgba(255,255,255,.15); }
+.cbar i { position: absolute; left: 0; top: 0; bottom: 0; min-width: 5px; border-radius: 5px; }
+.f-brilliant { background: linear-gradient(90deg, #F4B860, #F08A4B 60%, #E0527A); } .f-rich { background: linear-gradient(90deg, #E9C98A, #F4B860 60%, #F08A4B); }
+.f-warm { background: linear-gradient(90deg, #C9C2B8, #F0C9A0); } .f-soft { background: #CFC6BB; } .f-muted { background: #9A938C; }
+.c-brilliant, .c-rich { color: #FFE0AE; } .c-warm { color: #FBD9B4; } .c-soft, .c-muted { color: #fff; }
+.v.go { color: #FFD08A; } .v.maybe { color: #FFF1E5; } .v.skip { color: #E3DDD4; }
+@container (max-width: 330px) { .day { grid-template-columns: 52px 44px 32px minmax(0, 1fr) 70px; gap: 8px; } .day .d { font-size: 16px; } }
+
+/* Detail tiles: two across (three, then four, where there's room), the same frosted card, each with its own quiet
+   accent on its title and as a faint glow at the top. The three that make the colour run the full width. */
 .details { container-type: inline-size; }
 .dgrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-@container (min-width: 560px) { .dgrid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-@container (min-width: 900px) { .dgrid { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
-@container (max-width: 250px) { .dgrid { grid-template-columns: minmax(0, 1fr); } }
-.dt { --acc: #C9C2B8; container-type: inline-size; display: flex; flex-direction: column; gap: 4px; min-height: 176px; padding: 14px; font-variant-numeric: tabular-nums;
+@container (min-width: 620px) { .dgrid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@container (min-width: 940px) { .dgrid { grid-template-columns: repeat(4, minmax(0, 1fr)); } .dt.wide { grid-column: span 2; } }
+.dt { --acc: #C9C2B8; container-type: inline-size; display: flex; flex-direction: column; gap: 4px; min-height: 172px; font-variant-numeric: tabular-nums;
   background-image: linear-gradient(to bottom, color-mix(in srgb, var(--acc) 16%, transparent), transparent 50%); }
-.dt .eyebrow { margin: 0; color: color-mix(in srgb, var(--acc) 92%, white); }
-.dt .eyebrow svg { width: 15px; height: 15px; flex: none; }
-.dt .dv { margin-top: 4px; font-size: 30px; font-size: min(30px, calc(100cqw / 5.2)); font-weight: 500; line-height: 1.15; letter-spacing: -.015em; white-space: nowrap; }
-.dt .dv.words { font-size: 22px; font-size: min(22px, calc(100cqw / 6)); line-height: 1.22; white-space: normal; overflow-wrap: anywhere; }
-.dt .dv .u2 { font-size: max(13px, .5em); }
+.dt.wide { grid-column: 1 / -1; min-height: 0; }
+.dt .eyebrow { margin: 0; color: color-mix(in srgb, var(--acc) 68%, white); }
+.dt .eyebrow .aside { color: var(--t70); }
+.dt .dv { margin-top: 4px; font-size: 32px; font-size: min(32px, calc(100cqw / 4.6)); font-weight: 500; line-height: 1.15; letter-spacing: -.015em; white-space: nowrap; }
+.dt .dv.words { font-size: 22px; font-size: min(24px, calc(100cqw / 5.4)); line-height: 1.22; white-space: normal; overflow-wrap: anywhere; }
+.dt.wide .dv, .dt.wide .dv.words { font-size: 28px; }
+.dt .dv .u2 { display: block; font-size: 15px; font-weight: 400; line-height: 1.5; opacity: 1; color: var(--t70); }
 .dt .ds { font-size: 15px; line-height: 1.3; color: var(--t70); overflow-wrap: anywhere; }
-.dt .gfx { margin-top: 6px; }
-.dt .dn { margin-top: auto; padding-top: 6px; font-size: 13px; line-height: 1.35; color: var(--t85); overflow-wrap: break-word; }
-.dt .cap { font-size: 13px; color: var(--t70); margin-top: 2px; }
-.tilenote { margin-top: 10px; padding: 12px 14px; color: var(--t85); }
-.a-colour { --acc: #F4B860; } .a-cloud { --acc: #CFC6BB; } .a-west { --acc: #F2A65A; } .a-air { --acc: #9AD0C2; } .a-wind { --acc: #A9C4E8; }
-.a-temp { --acc: #F2A68C; } .a-rain { --acc: #8DB4E2; } .a-damp { --acc: #8FBED6; } .a-sun { --acc: #F4B860; } .a-moon { --acc: #E9DCC8; }
+.dt .gfx { margin-top: 8px; }
+.dt .dn { margin-top: auto; padding-top: 8px; font-size: 15px; line-height: 1.3; color: var(--t85); overflow-wrap: break-word; }
+.tilenote { margin-top: 10px; font-size: 13px; color: var(--t85); }
+.a-vis { --acc: #9BB8E8; } .visbar { background: linear-gradient(90deg, #8C8172, #9BB8E8); }
+.a-colour { --acc: #F4B860; } .a-cloud { --acc: #CFC6BB; } .a-west { --acc: #F2A65A; } .a-air { --acc: #9AD0C2; } .a-wind { --acc: #8FCFB6; }
+.a-temp { --acc: #9BD49A; } .a-rain { --acc: #8DB4E2; } .a-damp { --acc: #7FC4D8; } .a-sun { --acc: #F2A68C; } .a-moon { --acc: #E9DCC8; }
 /* A thin bar in a scale's colours with a dot at the reading. */
-.sbar { position: relative; height: 5px; margin: 9px 0 5px; border-radius: 5px; background: rgba(255,255,255,.16); }
-.sbar u { position: absolute; top: 50%; width: 11px; height: 11px; margin: -5.500px 0 0 -5.500px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 1.500px rgba(0,0,0,.45); }
-.sbar s { position: absolute; left: 50%; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; border-radius: 1px; background: rgba(255,255,255,.6); }
-.colourbar { background: linear-gradient(90deg, #6F6A66, #C9A98B 25%, #F0C9A0 45%, #F4B860 65%, #F08A4B 85%, #E0527A); }
+.sbar { position: relative; height: 5px; margin: 7px 0 3px; border-radius: 5px; background: rgba(255,255,255,.16); }
+.sbar u { position: absolute; top: 50%; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 1.500px rgba(0,0,0,.4); }
+.sbar s { position: absolute; left: 50%; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; border-radius: 1px; background: rgba(255,255,255,.7); }
+.colourbar { background: linear-gradient(90deg, #8E8A8C, #CFC6BB 22%, #F0C9A0 44%, #F4B860 66%, #F08A4B 86%, #E0527A); }
 .airbar { background: linear-gradient(90deg, #8C8172, #C9C2B8 45%, #9AD0C2); }
-.windbar { background: linear-gradient(90deg, #A9C4E8, #A9C4E8 30%, #E9C98A 55%, #E0527A); }
+.windbar { background: linear-gradient(90deg, #8FCFB6, #E9C98A 55%, #E0527A); }
 .tempbar { background: linear-gradient(90deg, #7FA7D9, #8FBED6 30%, #E9C98A 50%, #F2A65A 72%, #E04A7A); }
-.rainbar { background: linear-gradient(90deg, rgba(141,180,226,.25), #8DB4E2); }
+.rainbar { background: linear-gradient(90deg, rgba(141,180,226,.3), #8DB4E2); }
 .dampbar { background: linear-gradient(90deg, #E9C98A, #8FBED6 60%, #6F9FD0); }
+/* Colour: the sky as forecast, then the scale from Muted to Brilliant. */
+.scene { display: block; width: 100%; height: 76px; border-radius: 12px; margin-bottom: 12px; }
+.scale { display: grid; grid-template-columns: repeat(5, 1fr); margin-top: 6px; font-size: 13px; color: var(--t85); }
+.scale span { text-align: center; } .scale span:first-child { text-align: left; } .scale span:last-child { text-align: right; }
 /* Cloud cover: high, mid and low layers, each filled to its share. */
-.clbars { display: grid; grid-template-columns: 34px minmax(0, 1fr) 40px; align-items: center; gap: 5px 6px; }
-.clbars span { font-size: 13px; line-height: 15px; color: var(--t70); }
-.clbars b { font-size: 13px; font-weight: 500; text-align: right; color: var(--t85); }
-.clbars div { position: relative; height: 5px; border-radius: 3px; background: rgba(255,255,255,.14); }
-.clbars div i { position: absolute; left: 0; top: 0; bottom: 0; min-width: 4px; border-radius: 3px; background: var(--acc); }
-/* Cloud in the light's path: a column for each distance toward the sunset. */
-.pbars { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
-.pbars .b { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.pbars .col { position: relative; height: 34px; border-radius: 5px; background: rgba(255,255,255,.08); }
-.pbars .col i { position: absolute; left: 0; right: 0; bottom: 0; min-height: 3px; border-radius: 5px; background: var(--acc); }
-.pbars span { font-size: 13px; line-height: 15px; text-align: center; color: var(--t70); }
-.compass { display: block; width: 60px; height: 60px; }
-svg.moon { display: block; width: 40px; height: 40px; }
-
-/* The ten evenings: the day on the left, the verdict and sunset on the right, the score and reason between. */
-.day .d { grid-column: 1; grid-row: 1 / span 2; align-self: center; }
-.day .line1 { grid-column: 2; grid-row: 1; }
-.day .why, div.day .why { grid-column: 2; grid-row: 2; }
-.day .right { grid-column: 3; grid-row: 1 / span 2; align-self: center; }
-div.day .why { grid-row: 1 / span 2; align-self: center; }
-.day .why, div.day .why { grid-column: 2 / -1; }
-.day .right { grid-row: 1; }
-.day .d { grid-row: 1 / span 2; align-self: start; }
-.day { align-items: start; row-gap: 4px; }
-div.day .why { grid-column: 2; grid-row: 1; align-self: center; }
-div.day .right { align-self: center; }
-div.day .d { align-self: center; }
-/* On a phone the numeral, the colour class and the verdict say it; the stars stay in the reading above. */
-@media (max-width: 520px) { .day .stars { display: none; } .day { grid-template-columns: 84px 1fr auto; } }
-@media (max-width: 520px) { .day { grid-template-columns: 98px 1fr auto; } .day .colour.sm .n { display: none; } .day .line1 { flex-wrap: nowrap; } .day .best { margin-top: 2px; } }
+.clbars { display: grid; grid-template-columns: auto minmax(0, 1fr) 44px; align-items: center; gap: 10px 12px; }
+.clbars > span { display: flex; flex-direction: column; line-height: 1.2; }
+.clbars > span b { font-size: 15px; font-weight: 500; }
+.clbars small { font-size: 13px; color: var(--t70); }
+.clbars > b { font-size: 15px; font-weight: 500; text-align: right; }
+.clbars div { position: relative; height: 8px; border-radius: 4px; background: rgba(255,255,255,.14); }
+.clbars div i { position: absolute; left: 0; top: 0; bottom: 0; min-width: 5px; border-radius: 4px; }
+.clbars i.good { background: linear-gradient(90deg, #F0C9A0, #F4B860); } .clbars i.bad { background: #9A938C; }
+/* Toward the sunset: from you out to the sun, a column of cloud at each distance. */
+.pathg { display: flex; align-items: flex-end; gap: 10px; }
+.pathg .end { flex: none; display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: 13px; color: var(--t70); }
+.pathg .you i { width: 10px; height: 10px; margin: 0 0 14px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 3px rgba(255,255,255,.25); }
+.pathg .sunend svg { width: 24px; height: 24px; margin-bottom: 6px; color: var(--acc); }
+.pbars { flex: 1; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.pbars .b { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.pbars .col { position: relative; height: 54px; }
+.pbars .col::before { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 3px; border-radius: 3px; background: rgba(255,255,255,.2); }
+.pbars .col i { position: absolute; left: 0; right: 0; bottom: 0; min-height: 3px; border-radius: 5px; background: #B9B2AC; }
+.pbars span { font-size: 13px; line-height: 15px; text-align: center; color: var(--t70); white-space: nowrap; }
+.compass { display: block; width: 56px; height: 56px; }
+.sunpath { position: relative; height: 34px; }
+.sunpath svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.sunpath u { position: absolute; left: 76%; top: 22px; width: 9px; height: 9px; margin: -4.500px 0 0 -4.500px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 3px color-mix(in srgb, var(--acc) 40%, transparent); }
+svg.moon { display: block; width: 30px; height: 30px; }
+/* The small colour class beside a score, in lists and plans. */
+.colour.sm { padding: 2px 9px; background: rgba(0,0,0,.3); }
+.colour.sm b { font-weight: 600; }
+/* Places and the bottom bar, in the same key. */

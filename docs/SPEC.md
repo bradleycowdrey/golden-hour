@@ -1,6 +1,6 @@
 # Golden Hour: plan and spec
 
-Version 10. An app by Bradley Cowdrey, in the same family as Two Degrees, Bearings and Meridian. Items marked **(verify)** come from memory or secondary sources
+Version 11. An app by Bradley Cowdrey, in the same family as Two Degrees, Bearings and Meridian. Items marked **(verify)** come from memory or secondary sources
 and must be checked against primary documentation before they are relied on.
 
 **How to read this.** Sections 1 to 3 and 12 to 15 are the plan: what it is, the order of work, how
@@ -555,13 +555,23 @@ replaces the earlier Tonight, Week and Plans tabs.)
    large numeral with five proportionally filled stars; the colour class; the verdict; the range;
    the reason; any warning; "Plan this evening"; the times strip; **the next ten evenings** (six
    rated, four "Too early to call", the best one badged); and **the tiles**.
-   The tiles follow Two Degrees: two across on a phone, three then five where there is room, each a
-   frosted card with its own quiet accent, a title with an icon, a large reading, a small graphic and
-   one line of what it means. Every input to the score has its own tile: Colour (class, score out of
-   100, a scale from Muted to Brilliant), Cloud cover (high, mid and low), Toward the sunset (cloud
-   in the light's path at four distances, and how much of the sun will show), Air clarity, Wind,
-   Feels like (against the usual), Rain, Humidity, Sunset (time and compass direction) and Moon.
-   Tapping one of the ten evenings shows it at the top of the page, with a way back to tonight.
+   The page is laid out as Two Degrees lays out a city, and should be read beside it:
+   - **The reading**, straight on the sky: the place at 34 px, then the day, then the score in thin
+     type at about 100 px with "/ 5" beside it, the stars, the colour class ("Rich colour · 84"), the
+     verdict, and the range. No pills or boxes.
+   - **The evening** card: one sentence (the reason), then a column for each of the five moments
+     with a small sun-and-horizon glyph and the time.
+   - **The next ten evenings**: one line each, as Two Degrees shows ten days: the day, the verdict
+     icon and word, the score, a bar for the colour score on one shared scale, and the colour class
+     over the sunset time. Outlook rows are dimmed. The best evening is marked under its day.
+   - **The tiles**: every input to the score as its own frosted card, with an accent on its title
+     and a faint glow, a large reading, a graphic, and one line of what it means. **Every tile has
+     a graphic.** Three run the full width because together they make the colour: Colour (the sky
+     as forecast in miniature, and a scale from Muted to Brilliant), Cloud cover (high, mid and low
+     as three bars) and Toward the sunset (a column of cloud at each of four distances, from you to
+     the sun). The rest sit two across (three, then four, where there is room): Air clarity,
+     Visibility, Wind (a compass), Feels like (against the usual), Rain, Humidity, Sunset (the
+     sun's path and where it meets the horizon) and Moon (drawn as it is lit).
 2. **The bottom bar.** Plans on the left, a dot for each place in the middle (an arrow for the
    current location; a count such as "3 of 12" beyond seven places), and Places on the right.
 3. **Places.** The list of places, each a card with a swatch of its sky, tonight's score, colour

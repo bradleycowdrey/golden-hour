@@ -147,7 +147,7 @@ const server = http.createServer((req, res) => {
         const box = el.getBoundingClientRect();
         // The worst case for this text: the lightest sky it can sit over, which is the bottom of the window.
         let bg = skyAt(Math.min(1, Math.max(0, (box.bottom + (view ? view.scrollTop : 0)) / window.innerHeight)));   // where it sits before any scrolling
-        if (el.closest('.card, .notice, .warn, .verdict, .banner, .bar, .colour')) bg = skyAt(1);
+        if (el.closest('.card, .notice, .warn, .banner, .bar')) bg = skyAt(1);
         const chain = [];
         for (let e = el; e && e !== document.body; e = e.parentElement) chain.unshift(e);
         for (const e of chain) { const b = rgba(getComputedStyle(e).backgroundColor); if (b.a > 0) bg = over(b.c, b.a, bg); }
@@ -195,8 +195,8 @@ const server = http.createServer((req, res) => {
     check(await text(page, CUR + '.hero .score .n') === r.score.toFixed(1), `the score on screen is the core’s for the same forecast (${r.score.toFixed(1)})`);
     check((await text(page, CUR + '.verdict')).startsWith(r.verdictWord) && await page.locator(CUR + '.verdict svg').count() === 1, 'the verdict has a word and an icon, not just a colour');
     check((await text(page, CUR + '.hero .range')).includes(`likely ${r.lo.toFixed(1)} to ${r.hi.toFixed(1)}`), 'the range is shown, labelled typical');
-    check(await text(page, CUR + '.hero .reason') === r.reason, 'the reason sentence');
-    check((await text(page, CUR + '.hero .colour')).replace(/\s+/g, ' ') === `COLOUR ${r.colourClass} ${r.colour}`, `the colour class leads, after the stars (${r.colourClass}, ${r.colour})`);
+    check(await text(page, CUR + '.summary') === r.reason, 'the reason sentence opens the evening card');
+    check((await text(page, CUR + '.hero .colour')).replace(/\s+/g, ' ') === `${r.colourClass} colour · ${r.colour}`, `the colour class leads, after the stars (${r.colourClass}, ${r.colour})`);
     const label = await page.locator(CUR + '.hero').getAttribute('aria-label');
     check(label === `Tonight. ${r.score.toFixed(1)} out of 5 stars, likely ${r.lo.toFixed(1)} to ${r.hi.toFixed(1)}. ${r.colourClass} colour, ${r.colour} out of 100. ${r.verdictWord}${r.qualifier ? ', ' + r.qualifier : ''}. ${r.reason}`, 'screen readers get one sentence; the stars are hidden from them');
     check(await page.locator(CUR + '.hero .stars').getAttribute('aria-hidden') === 'true', 'star glyphs are hidden from assistive technology');
@@ -205,12 +205,15 @@ const server = http.createServer((req, res) => {
     const strip = await text(page, CUR + '.times');
     const fmt = (ms) => new Intl.DateTimeFormat('en-US', { timeZone: 'America/Denver', hour: 'numeric', minute: '2-digit' }).format(ms).replace(/ /g, ' ').toLowerCase();
     check(['goldenStart', 'bestStart', 'sunset', 'afterglowEnd', 'lastLight'].every((k) => strip.includes(fmt(exp.times[k]))), 'the five times match the sun’s position to the minute');
-    const tiles = await page.locator(CUR + '.dt .eyebrow').allInnerTexts();
-    check(['COLOUR', 'CLOUD COVER', 'TOWARD THE SUNSET', 'AIR CLARITY', 'WIND', 'FEELS LIKE', 'RAIN', 'HUMIDITY', 'SUNSET', 'MOON'].every((n) => tiles.includes(n)) && tiles.length === 10, `every input to the score has its own tile (${tiles.length})`);
+    const tiles = (await page.locator(CUR + '.dt .eyebrow > span:first-of-type').allInnerTexts()).map((t) => t.trim());
+    check(['COLOUR', 'CLOUD COVER', 'TOWARD THE SUNSET', 'AIR CLARITY', 'VISIBILITY', 'WIND', 'FEELS LIKE', 'RAIN', 'HUMIDITY', 'SUNSET', 'MOON'].every((n) => tiles.includes(n)) && tiles.length === 11, `every input to the score has its own tile (${tiles.length})`);
     const tileText = (name) => page.locator(CUR + `.dt[aria-label="${name}"]`).innerText();
     check((await tileText('Colour')).includes(r.colourClass) && (await tileText('Colour')).includes(`${r.colour} of 100`), 'the Colour tile shows the class and the score out of 100');
-    check(/High\s+\d+%\s+Mid\s+\d+%\s+Low\s+\d+%/.test((await tileText('Cloud cover')).replace(/\n/g, ' ')), 'the Cloud cover tile shows high, mid and low cloud');
-    check(/\d+ mph · \d+ km\/h/.test(await tileText('Wind')) && /\d+°F · \d+°C/.test(await tileText('Feels like')), 'tiles show their readings in both units');
+    check(/High.*\d+%.*Mid.*\d+%.*Low.*\d+%/.test((await tileText('Cloud cover')).replace(/\n/g, ' ')), 'the Cloud cover tile shows high, mid and low cloud');
+    check(/\d+ mph\s+\d+ km\/h/.test(await tileText('Wind')) && /\d+°F\s+\d+°C/.test(await tileText('Feels like')), 'tiles show their readings in both units');
+    const gfx = await page.locator(CUR + '.dt').evaluateAll((els) => els.filter((e) => !e.querySelector('.gfx svg, .gfx .sbar, .gfx .clbars, .gfx .pathg')).map((e) => e.getAttribute('aria-label')));
+    check(gfx.length === 0, `every tile has a graphic${gfx.length ? ': missing on ' + gfx.join(', ') : ''}`);
+    check(await page.locator(CUR + '.dt.wide').count() === 3 && await page.locator(CUR + '.dt[aria-label="Wind"] svg.compass').count() === 1, 'the three that make the colour run the full width; Wind has its compass');
     check(/Usual: \d+°F/.test(await tileText('Feels like')), 'Feels like compares with the usual evening temperature here');
     const dot = await page.locator(CUR + '.dt[aria-label="Colour"] .sbar u').evaluate((el) => parseFloat(el.style.left) / 100);
     check(Math.abs(dot - r.colour / 100) < 0.011, 'the dot on the Colour scale sits at the score');
@@ -224,7 +227,7 @@ const server = http.createServer((req, res) => {
     await page.click('#bar [data-act="open-list"]');
     await page.click('.seg [data-v="metric"]');
     await page.click('[data-act="close-view"]');
-    check(/\d+ km\/h · \d+ mph/.test(await page.locator(CUR + '.dt[aria-label="Wind"]').innerText()), 'the units switch, in Places, changes which is listed first');
+    check(/\d+ km\/h\s+\d+ mph/.test(await page.locator(CUR + '.dt[aria-label="Wind"]').innerText()), 'the units switch, in Places, changes which is listed first');
     check(await page.evaluate(() => JSON.parse(localStorage.getItem('gh.imperialFirst'))) === false, 'and is remembered');
     await page.click('#bar [data-act="open-list"]'); await page.click('.seg [data-v="imperial"]'); await page.click('[data-act="close-view"]');
     const p0 = net.calls.find((u) => u.includes('//api.open-meteo.com') && !/latitude=[^&]*(,|%2C)/.test(u));
@@ -260,13 +263,15 @@ const server = http.createServer((req, res) => {
     const rows = page.locator(CUR + '.day');
     check(await rows.count() === 10, 'each place’s page lists ten evenings');
     check(await page.locator(CUR + 'button.day').count() === 6, 'six are rated');
-    const outlook = await rows.nth(4).innerText();
-    check(/likely \d\.\d to \d\.\d/.test(outlook) && await rows.nth(4).locator('.stars.outlook').count() === 1 && /\d\.[05]\b/.test(await rows.nth(4).locator('.sc').innerText()), 'outlook rows use hollow half stars and a range');
+    check(/outlook/.test(await rows.nth(4).getAttribute('class')) && /^\d\.[05]$/.test(await rows.nth(4).locator('.sc').innerText()) && !/outlook/.test(await rows.nth(1).getAttribute('class')), 'outlook rows are dimmed and rounded to half a star');
+    const bars = await page.locator(CUR + 'button.day .cbar i').evaluateAll((els) => els.map((e) => Math.round(parseFloat(e.style.width))));
+    check(bars.length === 6 && bars.every((w, i) => w === Math.max(3, expectedDenver(i).rating.colour)), 'each rated evening has a bar for its colour score, on one scale');
+    check(await page.locator(CUR + 'button.day').evaluateAll((els) => els.every((e) => e.getBoundingClientRect().height <= 64)), 'one line an evening');
     check((await rows.nth(7).innerText()).includes('Too early to call') && /Sunset \d/.test(await rows.nth(7).innerText()), 'later rows show the sunset time and “Too early to call”');
     check(await page.locator(CUR + '.best').count() <= 1, 'at most one best evening');
     const exp = [0, 1, 2].map((d) => expectedDenver(d).rating).filter((r) => r.verdict === 'go').sort((a, b) => b.score - a.score)[0];
     check(!exp || (await page.locator(CUR + '.day:has(.best) .sc').innerText()) === exp.score.toFixed(1), 'the best evening is the highest Go among tonight and the next two');
-    await page.locator(CUR + '.week').scrollIntoViewIfNeeded();
+    await page.locator(CUR + '.daily').scrollIntoViewIfNeeded();
     await shot(page, 'phone-week');
     await layout(page, 'place page (phone)'); await contrast(page, 'place page');
     await rows.nth(1).click();
@@ -310,7 +315,7 @@ const server = http.createServer((req, res) => {
     await layout(page, 'compare (phone)');
     await page.locator('table.cmp tr').nth(1).locator('td button').nth(2).click();
     await page.waitForSelector(CUR + '.hero');
-    check((await text(page, CUR + '.hero h2')) === 'Denver' && /MONDAY/.test(await text(page, CUR + '.hero .when')), 'compare: a cell opens that place and evening');
+    check((await text(page, CUR + '.hero h2')) === 'Denver' && /Monday/.test(await text(page, CUR + '.hero .when')), 'compare: a cell opens that place and evening');
     await page.click('#bar [data-act="open-list"]');
     await page.locator('.lrow').nth(1).click();
     check((await text(page, CUR + '.hero h2')) === 'Boulder', 'the list: tapping a place opens its page');
@@ -472,7 +477,7 @@ const server = http.createServer((req, res) => {
     await first.context.close();
     const { page, context } = await withDenver({ time: exp.times.lastLight + 10 * MIN });
     await page.waitForSelector('#howWasIt');
-    check((await text(page, CUR + '.hero .when')).startsWith('TOMORROW EVENING'), 'after last light: Tonight shows tomorrow’s evening');
+    check((await text(page, CUR + '.hero .when')).startsWith('Tomorrow evening'), 'after last light: Tonight shows tomorrow’s evening');
     check((await text(page, CUR + '.hero .range')).startsWith('Forecast'), 'after last light: it keeps the Forecast label and range until midnight');
     check((await text(page, '#howWasIt')).includes(`We forecast ${exp.rating.score.toFixed(1)}`), 'after last light: “How was it?” for today, against what was forecast');
     await shot(page, 'phone-how-was-it');
@@ -495,7 +500,7 @@ const server = http.createServer((req, res) => {
     if (name === 'desktop') {
       const cols = await page.evaluate(() => { const c = document.querySelectorAll('.page[aria-current="true"] .two > .col'); return c[0].getBoundingClientRect().right <= c[1].getBoundingClientRect().left; });
       check(cols, 'desktop: two columns from 900px');
-      check(parseFloat(await page.locator(CUR + '.score .n').evaluate((el) => getComputedStyle(el).fontSize)) === 96, 'desktop: the score is 96px');
+      check(parseFloat(await page.locator(CUR + '.score .n').evaluate((el) => getComputedStyle(el).fontSize)) >= 96, 'desktop: the score is at least 96px');
     }
     await page.click('#bar [data-act="open-list"]');
     await layout(page, `places (${name})`);

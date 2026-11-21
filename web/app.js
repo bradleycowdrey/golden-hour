@@ -120,7 +120,7 @@
   }
 
   const r2 = (v) => (Math.round(v * 100) / 100).toFixed(2);
-  const HOURLY_P0 = 'cloud_cover_low,cloud_cover_mid,cloud_cover_high,visibility,precipitation,precipitation_probability,weather_code,relative_humidity_2m,apparent_temperature,wind_speed_10m,wind_gusts_10m';
+  const HOURLY_P0 = 'cloud_cover_low,cloud_cover_mid,cloud_cover_high,visibility,precipitation,precipitation_probability,weather_code,relative_humidity_2m,apparent_temperature,wind_speed_10m,wind_gusts_10m,wind_direction_10m';
   const COMMON = '&forecast_days=8&past_days=1&timeformat=unixtime&timezone=GMT&wind_speed_unit=ms';
   const hourly = (h) => { const o = { time: h.time.map((t) => t * 1000) }; for (const k of Object.keys(h)) if (k !== 'time') o[k] = h[k]; return o; };
 
@@ -454,95 +454,127 @@
   }
 
   // ---------- Tonight ----------
-  function timesStrip(ev, tz) {
-    const t = ev.times, f = (ms) => (ms == null ? '–' : esc(timeText(ms, tz)));
-    const all = t.state === 'twilight';
-    return `<div class="times">
-      <div><div class="t num">${f(t.goldenStart)}</div><div class="l">Golden hour</div></div>
-      <div><div class="t num">${f(t.bestStart)}</div><div class="l">Best window</div></div>
-      <div class="sun"><div class="t num">${f(t.sunset)}</div><div class="l">Sunset</div></div>
-      <div><div class="t num">${all ? 'All night' : f(t.afterglowEnd)}</div><div class="l">${all ? 'Twilight' : 'Afterglow ends'}</div></div>
-      <div><div class="t num">${all ? '–' : f(t.lastLight)}</div><div class="l">Last light</div></div>
-    </div>`;
+  let uidSeq = 0;
+  const uid = () => 'g' + (++uidSeq);
+  /** The sun against the horizon at one moment of the evening: `y` is its centre, 12 on the horizon. */
+  const sunGlyph = (y, on) => `<svg viewBox="0 0 28 24" aria-hidden="true">${on ? `<circle cx="14" cy="${y}" r="5" fill="#F4B860"/>` : `<circle cx="14" cy="${y}" r="4.300" fill="none" stroke="rgba(244,184,96,.75)" stroke-width="1.400" stroke-dasharray="2 2"/>`}<path d="M2 13h24" stroke="rgba(255,255,255,.8)" stroke-width="1.500" stroke-linecap="round"/></svg>`;
+  /** The evening, as Two Degrees shows the next 24 hours: one line about it, then a column for each moment. */
+  function eveningCard(ev, p) {
+    const t = ev.times, r = ev.rating, f = (ms) => (ms == null ? '–' : esc(timeText(ms, p.tz))), all = t.state === 'twilight';
+    const col = (label, time, glyph, cls) => `<div class="hour${cls || ''}"><span class="h">${label}</span><span class="ic">${glyph}</span><span class="f num">${time}</span></div>`;
+    const line = r ? esc(r.reason) : all ? 'Twilight lasts all night at this time of year.' : 'The best colour often comes after the sun is down.';
+    return `<section class="card"><p class="eyebrow">${TI.clock}<span>The evening</span><span class="sp"></span><span class="aside">Sets to the ${esc(compass(t.azimuth))}</span></p>
+      <p class="summary">${line}</p>${r ? deltaLine(p, ev) : ''}<hr class="rule">
+      <div class="times">${col('Golden', f(t.goldenStart), sunGlyph(3, true))}${col('Best light', f(t.bestStart), sunGlyph(7, true))}${col('Sunset', f(t.sunset), sunGlyph(12.500, true), ' sun')}${col('Afterglow', all ? 'All night' : f(t.afterglowEnd), sunGlyph(17, false))}${col('Last light', all ? '–' : f(t.lastLight), sunGlyph(19.500, false))}</div>
+      <p class="small muted" data-gap>${all ? 'It never gets fully dark.' : 'Stay through the afterglow: the best colour often comes after the sun is down.'}</p></section>`;
   }
 
-  // ---------- The tiles: every input to the score, each on its own, as in Two Degrees ----------
+  // ---------- The tiles: every input to the score, each with its own graphic, as in Two Degrees ----------
   const TI = {
+    clock: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.500" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 7.500V12l3 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+    cal: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5.500" width="16" height="14" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M4 10h16M8.500 3.500v4M15.500 3.500v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
     colour: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17h18M6 17a6 6 0 0 1 12 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M12 4v3M4.500 9.500l2 2M19.500 9.500l-2 2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
     cloud: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 19a5 5 0 0 1-.600-9.960A6 6 0 0 1 18 10.500 4.300 4.300 0 0 1 17.500 19z" fill="currentColor"/></svg>',
     west: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12H5M10 6l-6 6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-    air: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8h11a3 3 0 1 0-3-3M3 12h16a3 3 0 1 1-3 3M3 16h8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+    air: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.500-6.500 10-6.500S22 12 22 12s-3.500 6.500-10 6.500S2 12 2 12z" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>',
+    haze: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h16M2.500 12h19M5 16h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
     wind: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9h10a3 3 0 1 0-3-3M3 15h14a3 3 0 1 1-3 3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
     temp: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4a2 2 0 0 1 4 0v9.500a4.500 4.500 0 1 1-4 0z" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="17.500" r="2" fill="currentColor"/></svg>',
     rain: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3s6 6.500 6 11a6 6 0 0 1-12 0c0-4.500 6-11 6-11z" fill="currentColor"/></svg>',
     damp: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3s6 6.500 6 11a6 6 0 0 1-12 0c0-4.500 6-11 6-11z" fill="none" stroke="currentColor" stroke-width="2"/></svg>',
-    sun: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.500" fill="currentColor"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+    sun: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 18h18M6.500 18a5.500 5.500 0 0 1 11 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M12 6v3.500M9.500 7.500 12 10l2.500-2.500" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     moon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.500A8 8 0 0 1 9.500 4a8 8 0 1 0 10.500 10.500z" fill="currentColor"/></svg>',
   };
   const POINTS = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
-  /** A compass with an arrow pointing where the sun sets. */
-  function compassSvg(deg) {
-    const ticks = [0, 45, 90, 135, 180, 225, 270, 315].map((a) => `<line x1="32" y1="${a % 90 ? 7 : 5}" x2="32" y2="10" transform="rotate(${a} 32 32)" stroke="rgba(255,255,255,${a % 90 ? 0.35 : 0.7})" stroke-width="1.500" stroke-linecap="round"/>`).join('');
-    return `<svg class="compass" viewBox="0 0 64 64" aria-hidden="true"><circle cx="32" cy="32" r="27" fill="none" stroke="rgba(255,255,255,.22)" stroke-width="1.500"/>${ticks}
-      <g transform="rotate(${deg.toFixed(0)} 32 32)"><path d="M32 12l6 13h-4.500v18h-3V25H26z" fill="var(--acc)"/></g><circle cx="32" cy="32" r="2.500" fill="#fff"/></svg>`;
+  const pointOf = (deg) => POINTS[Math.round(G.normalize(deg) / 22.5) % 16];
+  /** The sky as forecast, in miniature: the evening's sky, the sun at the horizon, and cloud bands coloured
+      as richly as the colour score says. */
+  function sceneSvg(r, x) {
+    const [top, mid, bottom] = skyFor(r), id = uid(), d = r.detail, c = r.parts.c;
+    const n = d.canvas < 5 ? 0 : d.canvas < 30 ? 2 : d.canvas <= 70 ? 4 : 6;
+    const tint = ['#FF9A5A', '#FF6F7D', '#FFC56B', '#FF8A6A', '#F9A8A0', '#FFB35A'];
+    const spots = [[34, 18, 96], [176, 12, 112], [92, 34, 124], [212, 36, 88], [10, 46, 82], [138, 52, 104]];
+    const bands = spots.slice(0, n).map(([bx, by, bw], i) => `<rect x="${bx}" y="${by}" width="${bw}" height="7" rx="3.500" fill="${mix('#8E8A8C', tint[i], Math.min(1, c * 1.1))}" opacity="${(0.5 + 0.45 * c).toFixed(2)}"/>`).join('');
+    const low = (x.low || 0) >= 25 ? `<rect x="0" y="${(72 - (x.low / 100) * 26).toFixed(0)}" width="320" height="30" fill="#4A4648" opacity=".88"/>` : '';
+    return `<svg class="scene" viewBox="0 0 320 72" preserveAspectRatio="xMidYMid slice" aria-hidden="true"><defs><linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${top}"/><stop offset=".6" stop-color="${mid}"/><stop offset="1" stop-color="${bottom}"/></linearGradient></defs>
+      <rect width="320" height="72" fill="url(#${id})"/><circle cx="160" cy="70" r="20" fill="#FFE1AE" opacity="${(0.25 + 0.75 * r.parts.s).toFixed(2)}"/>${bands}${low}</svg>`;
   }
+  /** Wind: a compass, the arrow pointing where the wind is blowing. */
+  function windSvg(from) {
+    const to = G.normalize(from + 180);
+    const ticks = [0, 45, 90, 135, 180, 225, 270, 315].map((a) => `<line x1="36" y1="4" x2="36" y2="${a % 90 ? 7 : 8}" transform="rotate(${a} 36 36)" stroke="rgba(255,255,255,.5)" stroke-width="1.200" stroke-linecap="round"/>`).join('');
+    return `<svg class="compass" viewBox="0 0 72 72" aria-hidden="true"><circle cx="36" cy="36" r="33" fill="none" stroke="rgba(255,255,255,.3)" stroke-width="1.200"/>${ticks}
+      <g transform="rotate(${to.toFixed(0)} 36 36)"><path d="M36 13l5 9h-3.800v24a2.700 2.700 0 1 1-2.400 0V22H31z" fill="var(--acc)"/></g></svg>`;
+  }
+  /** The sun's path over the day, the horizon, and the moment it sets. */
+  const sunPathSvg = () => `<div class="sunpath" aria-hidden="true"><svg viewBox="0 0 100 34" preserveAspectRatio="none"><path d="M0 22H100" stroke="rgba(255,255,255,.3)" stroke-width="1" vector-effect="non-scaling-stroke" fill="none"/><path d="M0 31C22 31 30 5 50 5S78 31 100 31" stroke="var(--acc)" stroke-width="1.600" vector-effect="non-scaling-stroke" fill="none" opacity=".85"/></svg><u></u></div>`;
   /** The moon as it is lit: phase 0 new, 0.25 first quarter, 0.5 full, 0.75 last quarter. */
   function moonSvg(phase) {
     const r = 15, k = Math.cos(phase * 2 * Math.PI), waxing = phase < 0.5, rx = Math.abs(k) * r;
-    // The lit side is a half disc; the terminator is half an ellipse that adds to it (gibbous) or cuts into it (crescent).
     const lit = `M18 3 A${r} ${r} 0 0 ${waxing ? 1 : 0} 18 33 A${rx.toFixed(2)} ${r} 0 0 ${(k > 0) === waxing ? 0 : 1} 18 3z`;
     return `<svg class="moon" viewBox="0 0 36 36" aria-hidden="true"><circle cx="18" cy="18" r="${r}" fill="rgba(255,255,255,.14)"/><path d="${lit}" fill="#E9DCC8"/></svg>`;
   }
-  const tile = (cls, icon, title, value, sub, gfx, note, words) => `<section class="card dt a-${cls}" aria-label="${esc(title)}"><p class="eyebrow">${icon}<span>${esc(title)}</span></p>
-    <p class="dv${words ? ' words' : ''}">${value}</p>${sub ? `<p class="ds">${sub}</p>` : ''}${gfx ? `<div class="gfx">${gfx}</div>` : ''}${note ? `<p class="dn">${note}</p>` : ''}</section>`;
-  const sbar = (cls, pct) => `<div class="sbar ${cls}"><u data-l="${Math.max(0, Math.min(100, pct)).toFixed(0)}"></u></div>`;
+  const tile = (cls, icon, title, value, sub, gfx, note, o) => `<section class="card dt a-${cls}${o && o.wide ? ' wide' : ''}" aria-label="${esc(title)}"><p class="eyebrow">${icon}<span>${esc(title)}</span>${o && o.aside ? `<span class="sp"></span><span class="aside">${o.aside}</span>` : ''}</p>
+    <p class="dv${o && o.words ? ' words' : ''}">${value}</p>${sub ? `<p class="ds">${sub}</p>` : ''}${gfx ? `<div class="gfx">${gfx}</div>` : ''}${note ? `<p class="dn">${note}</p>` : ''}</section>`;
+  const sbar = (cls, pct, tick) => `<div class="sbar ${cls}">${tick ? '<s></s>' : ''}<u data-l="${Math.max(0, Math.min(100, pct)).toFixed(0)}"></u></div>`;
 
   function tilesHtml(ev, p) {
-    const r = ev.rating, x = ev.x, t = ev.times, out = [];
+    const r = ev.rating, x = ev.x, t = ev.times, out = [], imp = settings.imperialFirst;
+    // A reading in both units, the second beneath the first, as Two Degrees sets them.
+    const both = (text) => { const [a, b] = text.split(' · '); return `${esc(a)}<span class="u2">${esc(b)}</span>`; };
     if (r && x) {
       const d = r.detail, pc = (v) => Math.round(v || 0);
-      // Colour: the class, the score out of 100, where it sits from Muted to Brilliant.
-      out.push(tile('colour', TI.colour, 'Colour', esc(r.colourClass), `${r.colour} of 100`, sbar('colourbar', r.colour), 'Colour in the clouds is 70% of the score.', true));
+      // Colour: the sky as forecast, and where it sits from Muted to Brilliant.
+      out.push(tile('colour', TI.colour, 'Colour', esc(r.colourClass), `${r.colour} of 100`,
+        `${sceneSvg(r, x)}${sbar('colourbar', r.colour)}<div class="scale"><span>Muted</span><span>Soft</span><span>Warm</span><span>Rich</span><span>Brilliant</span></div>`,
+        'Colour in the clouds is most of the score.', { wide: true, aside: '70% of the score' }));
       // Cloud cover: the canvas. High, mid and low, each filled to its share.
-      const canvasWord = d.canvas < 5 ? 'None to catch it' : d.canvas < 30 ? 'A little' : d.canvas <= 70 ? 'Just right' : 'Heavy';
-      const layer = (name, v) => `<span>${name}</span><div><i data-w="${pc(v)}"></i></div><b class="num">${pc(v)}%</b>`;
-      out.push(tile('cloud', TI.cloud, 'Cloud cover', canvasWord, `${pc(d.canvas)}% mid and high cloud`, `<div class="clbars">${layer('High', x.high)}${layer('Mid', x.mid)}${layer('Low', x.low)}</div>`,
-        (x.low || 0) >= 40 ? 'Low cloud overhead hides the colour.' : 'High and mid cloud catch the light; low cloud blocks it.', true));
-      // Toward the sunset: cloud in the light's path, 50 to 300 km out, and whether the sun itself will show.
+      const canvasWord = d.canvas < 5 ? 'None to catch the colour' : d.canvas < 30 ? 'A little' : d.canvas <= 70 ? 'Just right' : 'Heavy';
+      const layer = (name, where, v, cls) => `<span><b>${name}</b><small>${where}</small></span><div><i class="${cls}" data-w="${pc(v)}"></i></div><b class="num">${pc(v)}%</b>`;
+      out.push(tile('cloud', TI.cloud, 'Cloud cover', canvasWord, `${pc(d.canvas)}% mid and high cloud to catch the light`,
+        `<div class="clbars">${layer('High', imp ? 'above 5 mi' : 'above 8 km', x.high, 'good')}${layer('Mid', imp ? '2 to 5 mi' : '3 to 8 km', x.mid, 'good')}${layer('Low', imp ? 'under 2 mi' : 'under 3 km', x.low, 'bad')}</div>`,
+        (x.low || 0) >= 40 ? 'Low cloud overhead hides the colour.' : 'High and mid cloud catch the light; low cloud blocks it.', { wide: true, words: true }));
+      // Toward the sunset: cloud in the light's path, from here out to the sun.
       const path = [0, 1, 2, 3].map((i) => Math.max(x.up[i] ? x.up[i].low : 0, i >= 2 && x.up[i] ? 0.5 * x.up[i].mid : 0, i >= 2 && x.up[i] ? 0.3 * x.up[i].high : 0));
       const km = [50, 100, 200, 300];
       out.push(tile('west', TI.west, 'Toward the sunset', r.parts.s >= 0.8 && d.lit >= 0.8 ? 'Open' : r.parts.s >= 0.4 ? 'Partly blocked' : 'Blocked', `Sun in view: ${pc(r.parts.s * 100)}%`,
-        `<div class="pbars">${path.map((v, i) => `<div class="b"><div class="col"><i data-h="${Math.max(4, pc(v))}"></i></div><span class="num">${settings.imperialFirst ? Math.round(km[i] / 1.609) : km[i]}</span></div>`).join('')}</div><p class="cap">Cloud in the light’s path, by ${settings.imperialFirst ? 'miles' : 'km'} out</p>`,
-        `Sun sets to the ${esc(compass(t.azimuth))}. 10% of the score.`, true));
+        `<div class="pathg"><span class="end you"><i></i>You</span><div class="pbars">${path.map((v, i) => `<div class="b"><div class="col"><i data-h="${Math.max(4, pc(v))}"></i></div><span class="num">${imp ? Math.round(km[i] / 1.609) : km[i]} ${imp ? 'mi' : 'km'}</span></div>`).join('')}</div><span class="end sunend">${TI.sun}Sun</span></div>`,
+        `Cloud in the light’s path. The sun sets to the ${esc(compass(t.azimuth))}.`, { wide: true, words: true, aside: '10% of the score' }));
       // Air clarity.
       const airWord = r.smoke ? 'Smoky' : r.parts.a >= 0.8 ? 'Clear' : r.parts.a >= 0.5 ? 'Light haze' : r.parts.a >= 0.2 ? 'Hazy' : 'Thick haze';
-      out.push(tile('air', TI.air, 'Air clarity', airWord, x.visibility != null ? `See ${dist(x.visibility / 1000)}` : '', sbar('airbar', r.parts.a * 100),
-        `${x.aod != null ? `Haze ${x.aod.toFixed(2)} (aerosol depth). ` : ''}Clean air keeps the colour vivid. 10% of the score.`, true));
+      out.push(tile('air', TI.haze, 'Air clarity', airWord, x.aod != null ? `Haze ${x.aod.toFixed(2)}` : '', sbar('airbar', r.parts.a * 100),
+        'Clean air keeps the colour vivid. 10% of the score.', { words: true }));
+      // Visibility.
+      if (x.visibility != null) {
+        const vkm = x.visibility / 1000;
+        out.push(tile('vis', TI.air, 'Visibility', both(G.distanceText(vkm, imp)), '', sbar('visbar', Math.min(100, vkm / 40 * 100)),
+          vkm >= 20 ? 'A clear view to the horizon.' : vkm >= 8 ? 'Some haze in the distance.' : 'The horizon will be lost in haze.'));
+      }
       // Wind.
-      const windWord = d.w <= 3.5 ? 'Calm' : d.w < 6.5 ? 'Breezy' : d.w < 9 ? 'Windy' : 'Very windy';
-      out.push(tile('wind', TI.wind, 'Wind', wind(x.wind || 0), `Gusts ${wind(x.gusts || 0)}`, sbar('windbar', (d.w / 12) * 100), `${windWord}. Low wind is best for sitting out.`));
+      const windWord = d.w <= 3.5 ? 'Calm' : d.w < 6.5 ? 'A breeze' : d.w < 9 ? 'Windy' : 'Very windy';
+      out.push(tile('wind', TI.wind, 'Wind', both(G.windText(x.wind || 0, imp)), '', x.windFrom != null ? windSvg(x.windFrom) : sbar('windbar', (d.w / 12) * 100),
+        `${windWord}${x.windFrom != null ? ` from the ${esc(compass(x.windFrom))}` : ''}. Gusts to ${esc(G.windText(x.gusts || 0, imp, true))}.`));
       // Feels like, against what is usual here.
       if (x.apparent != null) {
         const n = d.normal, diff = n == null ? null : x.apparent - n;
-        const word = diff == null ? '' : diff < -3 ? 'Cooler than usual' : diff > 4 ? 'Warmer than usual' : 'About usual';
-        const pos = diff == null ? 50 : 50 + Math.max(-12, Math.min(12, diff)) / 12 * 50;
-        out.push(tile('temp', TI.temp, 'Feels like', temp(x.apparent), n == null ? 'Half an hour after sunset' : `Usual: ${temp(n)}`,
-          n == null ? '' : `<div class="sbar tempbar"><s></s><u data-l="${pos.toFixed(0)}"></u></div>`, `${word ? word + ' for the time of year. ' : ''}Comfort is 10% of the score.`));
+        const word = diff == null ? 'Half an hour after sunset.' : diff < -3 ? 'Cooler than usual for the time of year.' : diff > 4 ? 'Warmer than usual for the time of year.' : 'About usual for the time of year.';
+        const pos = diff == null ? x.apparent / 35 * 100 : 50 + Math.max(-12, Math.min(12, diff)) / 12 * 50;
+        out.push(tile('temp', TI.temp, 'Feels like', both(G.tempText(x.apparent, imp)), n == null ? '' : `Usual: ${temp(n)}`, sbar('tempbar', pos, n != null), word));
       }
       // Rain.
       const showers = (x.codes || []).some((c) => c >= 80 && c <= 82);
-      out.push(tile('rain', TI.rain, 'Rain', `${pc(x.rainChance)}%`, (x.precipitation || 0) >= 0.1 ? `${x.precipitation.toFixed(1)} mm around sunset` : 'None expected at sunset', sbar('rainbar', x.rainChance || 0),
-        r.cap === 'rain' || r.cap === 'snow' ? 'Steady rain or snow caps the evening at 1.5 stars.' : showers ? 'Passing showers can leave the best skies.' : (x.rain12 || 0) >= 1 ? 'It rained earlier: the ground will be wet.' : 'Dry.'));
+      out.push(tile('rain', TI.rain, 'Rain', `${pc(x.rainChance)}%`, 'chance at sunset', sbar('rainbar', x.rainChance || 0),
+        r.cap === 'rain' || r.cap === 'snow' ? 'Steady rain or snow caps the evening at 1.5 stars.' : showers ? 'Passing showers can leave the best skies.' : (x.rain12 || 0) >= 1 ? 'It rained earlier: the ground will be wet.' : 'None expected.'));
       // Humidity.
       out.push(tile('damp', TI.damp, 'Humidity', `${pc(x.humidity)}%`, '', sbar('dampbar', x.humidity || 0), (x.humidity || 0) > 85 ? 'Damp air mutes the reds and oranges.' : 'Dry enough for clean colour.'));
     }
     if (t.sunset != null) {
       // Where and when the sun goes down.
-      out.push(tile('sun', TI.sun, 'Sunset', esc(timeText(t.sunset, p.tz)), `${POINTS[Math.round(G.normalize(t.azimuth) / 22.5) % 16]} · ${Math.round(t.azimuth)}°`, compassSvg(t.azimuth),
+      out.push(tile('sun', TI.sun, 'Sunset', esc(timeText(t.sunset, p.tz)), `${pointOf(t.azimuth)} · ${Math.round(t.azimuth)}°`, sunPathSvg(),
         t.state === 'twilight' ? 'Twilight lasts all night.' : `Best light ${esc(timeText(t.bestStart, p.tz))} to ${esc(timeText(t.bestEnd, p.tz))}.`));
       // The moon at last light.
       const at = t.lastLight != null ? t.lastLight : t.sunset + 90 * MIN, m = G.moonAt(at, p.lat, p.lon), ph = G.moonPhase(at).phase;
-      out.push(tile('moon', TI.moon, 'Moon', esc(m.name), `${Math.round(m.fraction * 100)}% lit`, moonSvg(ph), m.up ? 'Up at last light, for the walk back.' : 'Not up at last light.', true));
+      out.push(tile('moon', TI.moon, 'Moon', esc(m.name), `${Math.round(m.fraction * 100)}% lit`, moonSvg(ph), m.up ? 'Up at last light, for the walk back.' : 'Not up at last light.', { words: true }));
     }
     return out.length ? `<section class="details" aria-label="What’s behind the score"><div class="dgrid">${out.join('')}</div>
       ${r ? `<p class="small tilenote card">Clean air and comfort only count when there is a sky worth watching${r.gate < 0.995 ? ` (counted at ${Math.round(r.gate * 100)}% this evening)` : ''}.${r.cap ? ' This evening is capped at 1.5 stars.' : ''}</p>` : ''}</section>` : '';
@@ -558,41 +590,39 @@
     return '';
   }
 
-  /** One place's page: the evening, its times, the ten evenings ahead, and what is behind the score. */
+  /** One place's page, laid out as Two Degrees lays out a city: the reading on the sky, the evening, the ten
+      evenings ahead, then a tile for every input. */
   function pageHtml(p) {
     const d = DATA[p.id] || {}, evs = evenings(p), f = focusDay(p, evs);
     const ev = evs[S.dayBy[p.id] == null ? f : S.dayBy[p.id]] || evs[f], r = ev.rating;
     const label = evLabel(ev, p, evs);
-    const head = `<p class="when">${esc(label)} · ${esc(dayName(ev.date))} ${esc(dateText(ev.date))}</p><h2>${esc(p.name)}${p.sample ? ' <span class="tag">Sample</span>' : ''}</h2>`;
+    const head = `<h2>${esc(p.name)}${p.sample ? ' <span class="tag">Sample</span>' : ''}</h2><p class="when">${esc(label)} · ${esc(dayName(ev.date, true))}, ${esc(dateText(ev.date))}${p.region ? ` · ${esc(p.region)}` : ''}</p>`;
     let hero;
-    if (ev.times.state === 'none') hero = `<section class="hero">${head}<p class="none">No sunset here on this date</p><p class="reason">${ev.times.polar === 'day' ? 'The sun stays up all night.' : 'The sun stays below the horizon.'}</p></section>`;
+    if (ev.times.state === 'none') hero = `<section class="hero">${head}<p class="none">No sunset here on this date</p><p class="cond">${ev.times.polar === 'day' ? 'The sun stays up all night.' : 'The sun stays below the horizon.'}</p></section>`;
     else if (r) {
       const stale = d.source !== 'sample' && now() - d.fetchedAt > 3 * HOUR;
       hero = `<section class="hero" aria-label="${esc(spoken(label, r))}">${head}
         <div class="score${stale ? ' stale' : ''}" aria-hidden="true"><span class="n">${scoreText(r)}</span><span class="of">/ 5</span></div>
         <div aria-hidden="true">${stars(r.tier === 'outlook' ? r.shown : r.score, r.tier === 'outlook')}</div>
-        <div aria-hidden="true" class="classline">${colourHtml(r)}</div>
-        <div aria-hidden="true">${verdictHtml(r, true)}</div>
-        <p class="range" aria-hidden="true">${r.tier === 'outlook' ? 'Outlook' : r.tier === 'forecast' ? 'Forecast' : 'Tonight'} · ${rangeText(r)} <span class="muted">(typical)</span></p>
-        <p class="reason" aria-hidden="true">${esc(r.reason)}</p>
-        ${stale ? '<p class="delta">Out of date. Reconnect to refresh.</p>' : deltaLine(p, ev)}
+        <p class="cond colour c-${r.colourClass.toLowerCase()}" aria-hidden="true"><b>${r.colourClass}</b> colour <span class="n num">· ${r.colour}</span></p>
+        <p class="hilo verdict ${r.verdict}" aria-hidden="true">${ICON[r.verdict]}<span>${r.verdictWord}${r.qualifier ? `<span class="q">, ${esc(r.qualifier)}</span>` : ''}</span></p>
+        <p class="hilo other range" aria-hidden="true">${r.tier === 'outlook' ? 'Outlook' : r.tier === 'forecast' ? 'Forecast' : 'Tonight'} · ${rangeText(r)} (typical)</p>
+        ${stale ? '<p class="hilo other">Out of date. Reconnect to refresh.</p>' : ''}
       </section>`;
-    } else if (ev.day > 5) hero = `<section class="hero">${head}<p class="none">Too early to call</p><p class="reason">Sunset is at ${esc(timeText(ev.times.sunset, p.tz))}. A rating appears five days ahead.</p></section>`;
+    } else if (ev.day > 5) hero = `<section class="hero">${head}<p class="none">Too early to call</p><p class="cond">Sunset is at ${esc(timeText(ev.times.sunset, p.tz))}. A rating appears five days ahead.</p></section>`;
     else if (d.error) hero = `<section class="hero">${head}<p class="none">${d.error === 'ceiling' ? 'Refreshing again tomorrow' : 'Couldn’t reach the forecast'}</p><div class="cta"><button type="button" class="btn white" data-act="retry">Try again</button></div></section>`;
     else if (d.fc) hero = `<section class="hero">${head}<p class="none">No forecast for this evening yet</p></section>`;
     else hero = `<section class="hero skeleton" aria-busy="true">${head}<div class="bone" data-w="40"></div><div class="bone" data-w="60"></div><div class="bone" data-w="50"></div></section>`;
 
     const warns = r ? r.warnings.map((w) => `<div class="warn" role="note">${ICON.warn}<span>${esc(w.text)}</span></div>`).join('') : '';
     const canPlan = ev.times.state !== 'none' && now() < endOf(ev, p);
-    const cta = canPlan ? `<div class="cta"><button type="button" class="btn primary" data-act="plan-new" data-date="${ev.date}">Plan this evening</button></div>` : '';
-    const sample = p.sample ? `<section class="card"><p><b>This is a sample forecast.</b> Add your own place to see the real one. You can add several and swipe between them.</p><div class="row" data-gap><button type="button" class="btn white" data-act="add-place">Add a place</button></div></section>` : '';
-    const timesCard = ev.times.state === 'none' ? '' : `<section class="card"><p class="eyebrow">The evening<span class="sp"></span><span class="aside">Sun sets to the ${esc(compass(ev.times.azimuth))}</span></p>${timesStrip(ev, p.tz)}
-      <p class="small muted" data-gap>${ev.times.state === 'twilight' ? 'Twilight lasts all night at this time of year.' : 'The best colour often comes after the sun is down. Stay through the afterglow.'}</p></section>`;
+    const cta = canPlan ? `<div class="cta"><button type="button" class="btn white" data-act="plan-new" data-date="${ev.date}">Plan this evening</button></div>` : '';
+    const sample = p.sample ? `<section class="card ask"><h3>This is a sample forecast</h3><p>Add your own place to see the real one. You can add several and swipe between them.</p><div class="row" data-gap><button type="button" class="btn white" data-act="add-place">Add a place</button></div></section>` : '';
     const back = S.dayBy[p.id] != null && S.dayBy[p.id] !== f ? `<button type="button" class="btn quiet back" data-act="day" data-day="">‹ Back to ${f === 1 ? 'tomorrow' : 'tonight'}</button>` : '';
     const best = bestOf(evs);
-    const week = `<section class="card week"><p class="eyebrow">The next ten evenings</p>${evs.map((e) => dayRow(e, p, evs, best)).join('')}
-      <p class="small muted" data-gap>Today and the next two evenings are a forecast. Days three to five are an outlook and may change. Beyond that it is too early to call.</p></section>`;
-    return `${back}<div class="two"><div class="col">${hero}${warns}${cta}${sample}</div><div class="col">${howWasIt(p, evs)}${timesCard}${week}</div></div>${tilesHtml(ev, p)}${footHtml()}`;
+    const week = `<section class="card daily"><p class="eyebrow">${TI.cal}<span>The next ten evenings</span><span class="sp"></span><span class="aside">Colour</span></p><div class="days">${evs.map((e) => dayRow(e, p, evs, best, ev)).join('')}</div>
+      <p class="small muted" data-gap>The bar is the colour score. Tap an evening to see it above. Days three to five are an outlook and may change.</p></section>`;
+    return `${back}<div class="two"><div class="col">${hero}${warns}${cta}${sample}</div><div class="col">${howWasIt(p, evs)}${ev.times.state === 'none' ? '' : eveningCard(ev, p)}${week}</div></div>${tilesHtml(ev, p)}${footHtml()}`;
   }
   const compass = (deg) => ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'][Math.round(G.normalize(deg) / 45) % 8];
 
@@ -643,19 +673,23 @@
   }
 
   // ---------- Week and Compare ----------
-  function dayRow(ev, p, evs, best) {
-    const label = ev.day === 0 ? 'Today' : ev.day === 1 ? 'Tomorrow' : dayName(ev.date, true);
-    const d = `<span class="d">${esc(label)}<small>${esc(dateText(ev.date))}</small></span>`;
-    const sunset = ev.times.sunset == null ? '' : `<span class="s num">Sunset ${esc(timeText(ev.times.sunset, p.tz))}</span>`;
-    if (ev.times.state === 'none') return `<div class="day">${d}<span class="mid"><span class="why">No sunset here on this date</span></span><span class="right"></span></div>`;
-    if (!ev.rating) return `<div class="day">${d}<span class="mid"><span class="why">${ev.day > 5 ? 'Too early to call' : 'No forecast yet'}</span></span><span class="right">${sunset}</span></div>`;
-    const r = ev.rating, out = r.tier === 'outlook';
-    const badge = best && best.ev.date === ev.date ? ` <span class="best">${best.label}</span>` : '';
-    return `<button type="button" class="day" data-act="day" data-day="${ev.day}" aria-label="${esc(spoken(label, r))}">${d}
-      <span class="mid" aria-hidden="true"><span class="line1">${stars(out ? r.shown : r.score, out, true)}<span class="sc">${scoreText(r)}</span>${colourHtml(r, true)}${badge}</span>
-      <span class="why">${out ? `${rangeText(r)} · ` : ''}${esc(r.reason)}</span></span>
-      <span class="right" aria-hidden="true"><span class="v ${r.verdict}">${ICON[r.verdict]}${r.verdictWord}</span>${sunset}</span></button>`;
+  /** One evening in the list of ten, as Two Degrees shows a day: the day, the verdict, the score, a bar for
+      the colour, and the colour class over the sunset time. */
+  function dayRow(ev, p, evs, best, shown) {
+    const label = ev.day === 0 ? 'Today' : ev.day === 1 ? 'Tomorrow' : dayName(ev.date, true), short = ev.day === 0 ? 'Today' : dayName(ev.date);
+    const isBest = best && best.ev.date === ev.date;
+    const d = `<span class="d">${esc(short)}${isBest ? `<small class="best">${best.label === 'Best evening' ? 'Best' : 'Likely best'}</small>` : ''}</span>`;
+    const sunset = ev.times.sunset == null ? '' : esc(timeText(ev.times.sunset, p.tz));
+    if (ev.times.state === 'none') return `<div class="day none">${d}<span class="why">No sunset here on this date</span><span class="hi"></span></div>`;
+    if (!ev.rating) return `<div class="day none">${d}<span class="why">${ev.day > 5 ? 'Too early to call' : 'No forecast yet'}</span><span class="hi"><span>Sunset ${sunset}</span></span></div>`;
+    const r = ev.rating, out = r.tier === 'outlook', cls = r.colourClass.toLowerCase();
+    return `<button type="button" class="day${out ? ' outlook' : ''}${shown && shown.date === ev.date ? ' on' : ''}" data-act="day" data-day="${ev.day}" aria-label="${esc(spoken(label, r))}">${d}
+      <span class="ic v ${r.verdict}" aria-hidden="true">${ICON[r.verdict]}<small>${r.verdictWord}</small></span>
+      <span class="sc num" aria-hidden="true">${scoreText(r)}</span>
+      <span class="cbar" aria-hidden="true"><i class="f-${cls}" data-w="${Math.max(3, r.colour)}"></i></span>
+      <span class="hi" aria-hidden="true"><b class="c-${cls}">${r.colourClass}</b><span>${sunset}</span></span></button>`;
   }
+
   // ---------- Plans ----------
   function plansView() {
     const today = localDate(now(), deviceTz());
