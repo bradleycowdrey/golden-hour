@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; worker-src 'self' blob:; child-src 'self' blob:; connect-src 'self' https://api.open-meteo.com https://air-quality-api.open-meteo.com https://archive-api.open-meteo.com https://geocoding-api.open-meteo.com https://tiles.openfreemap.org; base-uri 'none'; form-action 'none'">
+<title>Golden Hour: which evenings are worth it</title>
+<meta name="description" content="Golden Hour rates every coming sunset from 0 to 5 stars for the places you care about, and plans the evening: when to leave, what to bring, when to head home. Free and open source, by Bradley Cowdrey.">
+<meta name="theme-color" content="#1A1816">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.png">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="sky" aria-hidden="true"></div>
+<div class="app" id="app">
+  <header class="hdr">
+    <svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#1A1816"/><circle cx="16" cy="19" r="7" fill="#F4B860"/><rect x="0" y="19" width="32" height="13" fill="#1A1816"/><rect x="5" y="19" width="22" height="1.6" rx=".8" fill="#FFF1E5"/><rect x="9" y="23" width="14" height="1.4" rx=".7" fill="#FFF1E5" opacity=".55"/></svg>
+    <h1>Golden Hour</h1>
+    <span class="sp"></span>
+    <div class="seg" role="group" aria-label="Which units are listed first">
+      <button type="button" data-act="units" data-v="imperial" id="unitsImperial">°F · mi</button>
+      <button type="button" data-act="units" data-v="metric" id="unitsMetric">°C · km</button>
+    </div>
+  </header>
+  <div class="places" id="places"></div>
+  <div class="search card" id="search" hidden></div>
+  <div class="banner" id="banner" hidden role="status"></div>
+  <main id="view" tabindex="-1"></main>
+  <footer class="foot card" id="foot"></footer>
+</div>
+<nav class="tabs" id="tabs" aria-label="Sections">
+  <button type="button" data-act="tab" data-v="tonight" id="tabTonight"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17h18M6.5 17a5.5 5.5 0 0 1 11 0M12 5v3M4.6 9.6l2 2M19.4 9.6l-2 2M5 21h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span>Tonight</span></button>
+  <button type="button" data-act="tab" data-v="week" id="tabWeek"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span>Week</span></button>
+  <button type="button" data-act="tab" data-v="plans" id="tabPlans"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-6.5-5.4-6.5-10.5a6.5 6.5 0 0 1 13 0C18.500 15.600 12 21 12 21z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><circle cx="12" cy="10.500" r="2.3" fill="currentColor"/></svg><span>Plans</span></button>
+</nav>
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+<script src="core.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

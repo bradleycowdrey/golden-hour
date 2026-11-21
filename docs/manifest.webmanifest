@@ -1,0 +1,14 @@
+{
+  "name": "Golden Hour",
+  "short_name": "Golden Hour",
+  "description": "Which evenings are worth it, and a plan for the ones that are.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#1A1816",
+  "theme_color": "#1A1816",
+  "icons": [
+    { "src": "icon.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
