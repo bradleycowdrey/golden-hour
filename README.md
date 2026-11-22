@@ -13,7 +13,7 @@ leave, what to bring, and when to head home. It is in the same family as
 [Two Degrees](https://github.com/bradleycowdrey/two-degrees) and
 [Bearings](https://github.com/bradleycowdrey/bearings), and shows imperial and metric side by side.
 
-This is **Release 1** of the plan in [docs/SPEC.md](docs/SPEC.md). Version 0.9.2.
+This is **Release 1** of the plan in [docs/SPEC.md](docs/SPEC.md). Version 0.9.3.
 
 ## What it does
 
@@ -34,6 +34,10 @@ This is **Release 1** of the plan in [docs/SPEC.md](docs/SPEC.md). Version 0.9.2
   spots. The top three of each sit at the foot of every location's page; each opens on its own screen with
   directions, tonight's rating there and "Plan this evening here". Ranked from OpenStreetMap: well-known
   places and places named for the sunset first.
+- **Where to watch, straight under the rating**: ideas to swipe through, so the first screen answers "is it
+  worth it?" and "where could I go?". Each place links to Google Maps for photos and reviews.
+- **Tap an evening for its detail** in a sheet over the page, as in Two Degrees: swipe or use the arrows to
+  move between evenings; the location's page stays where it was.
 - **Share in one tap**: tonight's sunset (with a picture of the sky), any place, or the app itself.
 - **The moon this evening**: its phase and the month at a glance, where it is in the sky as the sun goes
   down, moonrise and moonset, moonlight for the walk back, and how near it is.
@@ -53,6 +57,8 @@ This is **Release 1** of the plan in [docs/SPEC.md](docs/SPEC.md). Version 0.9.2
 Golden Hour has no accounts and collects nothing. To get forecasts and places, your device sends
 coordinates to Open-Meteo and the map tile host. Fonts and the map library are served from this site.
 Places, plans and your sunset log stay in your browser.
+"Photos and reviews on Google Maps" opens Google with the place's name, only when you tap it. "Send it to
+GitHub", after you rate an evening, opens a pre-filled public report for you to review before posting.
 
 ## Run it
 

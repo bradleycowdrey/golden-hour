@@ -238,6 +238,12 @@ Tiers are defined by evening, counted in the place's local calendar. Day 0 is to
 - For Tonight and Forecast, when the range crosses a threshold the verdict names the nearer one:
   "Go, could slip to Maybe", "Maybe, could reach Go", "Maybe, could slip to Skip", "Skip, could
   reach Maybe". Outlook verdicts carry only "may change". Capped evenings get no qualifier.
+- **A day's detail** opens in a sheet over the location's page (Done, arrows and a sideways swipe between
+  evenings; Escape closes). The page underneath always shows tonight, or tomorrow once tonight is over.
+- **Where to watch**: a row of places to swipe through sits straight under the rating: your own spots, then
+  the top of each kind in turn. A place's screen links to Google Maps for photos and reviews.
+- **After "How was it?"** a card offers "Send it to GitHub": a pre-filled public issue with the date, the
+  location's name, the forecast, its four parts and what you saw.
 - **Good and Great**: in the list of evenings, every Go evening is marked Good, or Great when its score is
   4.5 or above. No single evening is called best.
 - After last light the Tonight screen shows the next evening, but tiers do not shift until local

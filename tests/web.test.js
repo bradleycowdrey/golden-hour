@@ -320,13 +320,28 @@ const server = http.createServer((req, res) => {
     check(/^Friday, Jun 26 and beyond: too early to call$/.test((await rows.nth(6).innerText()).trim()), 'one line: “Friday, Jun 26 and beyond: too early to call”');
     const marks = await page.locator(CUR + 'button.day').evaluateAll((els) => els.map((e) => (e.querySelector('.best') || {}).textContent || ''));
     check(marks.every((m, i) => { const r = expectedDenver(i).rating; return m === (r.verdict !== 'go' ? '' : r.score >= 4.5 ? 'Great' : 'Good'); }), `each Go evening is marked Good, or Great from 4.5 (${marks.join('|')})`);
+    {
+      const heroWas = await page.locator(CUR + '.hero .score .n').first().innerText();
+      const want = async (i) => (await page.locator(CUR + 'button.day').nth(i).locator('.sc').innerText()).trim();
+      const w2 = await want(2), w3 = await want(3);
+      await page.locator(CUR + 'button.day').nth(2).click();
+      const sheet = page.locator('#sheet');
+      const got = (await sheet.locator('.score .n').innerText()).trim();
+      check(await sheet.isVisible() && parseFloat(got) === parseFloat(w2) && (await page.locator(CUR + '.hero .score .n').first().innerText()) === heroWas, `tapping an evening opens its detail in a sheet; the location’s page stays as it was (${got} / ${w2})`);
+      check(await sheet.locator('.evpath').count() === 1 && await sheet.locator('.dt').count() === 15, 'the sheet has that evening’s times and every tile');
+      await sheet.locator('[data-act="sheet-step"][data-d="1"]').click();
+      check(parseFloat(await page.locator('#sheet .score .n').innerText()) === parseFloat(w3), 'the arrows step to the next evening');
+      await page.keyboard.press('Escape');
+      check(!(await page.locator('#sheetback').isVisible()), 'Escape or Done closes it');
+    }
     await page.locator(CUR + '.daily').scrollIntoViewIfNeeded();
     await shot(page, 'phone-week');
     await layout(page, 'place page (phone)'); await contrast(page, 'place page');
     await rows.nth(1).click();
-    await page.waitForFunction(() => /TOMORROW/i.test(document.querySelector('.page[aria-current="true"] .hero .when').textContent));
-    check(await page.locator(CUR + '[data-act="plan-new"]').isVisible(), 'tapping an evening shows it at the top, with Plan this evening');
-    check(await page.locator(CUR).evaluate((el) => el.scrollTop) === 0 && await page.locator(CUR + '.back').isVisible(), 'the page returns to the top, with a way back to tonight');
+    await page.waitForFunction(() => /TOMORROW/i.test(document.querySelector('#sheet .hero .when').textContent));
+    check(await page.locator('#sheet [data-act="plan-new"]').isVisible(), 'an evening’s sheet has Plan this evening');
+    await page.locator('#sheet [data-act="sheet-close"]').click();
+    check(!(await page.locator('#sheetback').isVisible()) && /TONIGHT/i.test(await text(page, CUR + '.hero .when')), 'Done closes it, back on tonight');
 
     // A second place: its own page, swiped to.
     await addPlace(page, 'Bould');
@@ -364,7 +379,8 @@ const server = http.createServer((req, res) => {
     await layout(page, 'compare (phone)');
     await page.locator('table.cmp tr').nth(1).locator('td button').nth(2).click();
     await page.waitForSelector(CUR + '.hero');
-    check((await text(page, CUR + '.hero h2')) === 'Denver' && /Monday/.test(await text(page, CUR + '.hero .when')), 'compare: a cell opens that place and evening');
+    check((await text(page, CUR + '.hero h2')) === 'Denver' && /Monday/.test(await text(page, '#sheetTitle')), 'compare: a cell opens that place, with that evening’s sheet');
+    await page.locator('#sheet [data-act="sheet-close"]').click();
     await page.click('#bar [data-act="open-list"]');
     await page.locator('.lrow').nth(1).click();
     check((await text(page, CUR + '.hero h2')) === 'Boulder', 'the list: tapping a place opens its page');
@@ -386,6 +402,9 @@ const server = http.createServer((req, res) => {
     const kinds = Object.fromEntries(await page.locator(CUR + '.ghplaces .srow').evaluateAll((els) => els.map((e) => [e.querySelector('.n').textContent.trim(), e.querySelector('.sbadge use').getAttribute('href')])));
     check(kinds['Lookout Mountain'] === '#k-summit' && kinds['Sky Bar'] === '#k-rooftop' && (kinds['Inspiration Point'] || '#k-viewpoint') === '#k-viewpoint', 'summits, rooftops and viewpoints each have their own picture');
     check(await page.locator(CUR + '.ghplaces .srow .sbadge .rank').allInnerTexts().then((t) => t.join('') === '123123123'), 'each keeps its rank, one to three, on the corner of its picture');
+    const strip = page.locator(CUR + '.strip .scard');
+    check(await strip.count() === 9 && await page.locator(CUR + '.strip').evaluate((e) => e.compareDocumentPosition(document.querySelector('[aria-current] .daily')) & 4), 'ideas for where to watch sit straight under the rating, above the details');
+    check(await page.locator(CUR + '.striprow').evaluate((e) => e.scrollWidth > e.clientWidth && document.documentElement.scrollWidth <= innerWidth), 'the ideas swipe sideways without widening the page');
     const first = (await cards.nth(0).locator('.srow .n').first().innerText()).trim();
     check(first === 'Sloan’s Lake Park' || first === 'Inspiration Point' || first === 'Sunset Park', `famous and sunset-named places rank first (${first})`);
     check((await cards.nth(1).innerText()).includes('Lookout Mountain') && /effort/i.test(await cards.nth(1).innerText()), 'adventurous places say how much effort they take');
