@@ -248,7 +248,7 @@ const server = http.createServer((req, res) => {
     const fmt = (ms) => new Intl.DateTimeFormat('en-US', { timeZone: 'America/Denver', hour: 'numeric', minute: '2-digit' }).format(ms).replace(/ /g, ' ').toLowerCase();
     check(['goldenStart', 'bestStart', 'sunset', 'afterglowEnd', 'lastLight'].every((k) => strip.includes(fmt(exp.times[k]))), 'the five times match the sun’s position to the minute');
     const tiles = (await page.locator(CUR + '.dt .eyebrow > span:first-of-type').allInnerTexts()).map((t) => t.trim());
-    check(['COLOUR', 'CLOUD COVER', 'TOWARD THE SUNSET', 'AIR CLARITY', 'VISIBILITY', 'WIND', 'FEELS LIKE', 'RAIN', 'HUMIDITY', 'SUNSET', 'MOON', 'AT SUNSET', 'MOONRISE', 'MOONSET', 'MOONLIGHT', 'DISTANCE'].every((n) => tiles.includes(n)) && tiles.length === 16, `every input to the score has its own tile (${tiles.length})`);
+    check(['COLOUR', 'CLOUD COVER', 'TOWARD THE SUNSET', 'AIR CLARITY', 'VISIBILITY', 'WIND', 'FEELS LIKE', 'RAIN', 'HUMIDITY', 'MOON', 'AT SUNSET', 'MOONRISE', 'MOONSET', 'MOONLIGHT', 'DISTANCE'].every((n) => tiles.includes(n)) && tiles.length === 15, `every input to the score has its own tile (${tiles.length})`);
     const tileText = (name) => page.locator(CUR + `.dt[aria-label="${name}"]`).innerText();
     check((await tileText('Colour')).includes(r.colourClass) && (await tileText('Colour')).includes(`${r.colour} of 100`), 'the Colour tile shows the class and the score out of 100');
     check(/High.*\d+%.*Mid.*\d+%.*Low.*\d+%/.test((await tileText('Cloud cover')).replace(/\n/g, ' ')), 'the Cloud cover tile shows high, mid and low cloud');
@@ -318,9 +318,8 @@ const server = http.createServer((req, res) => {
     check(bars.length === 6 && bars.every((w, i) => w === Math.max(3, expectedDenver(i).rating.colour)), 'each rated evening has a bar for its colour score, on one scale');
     check(await page.locator(CUR + 'button.day').evaluateAll((els) => els.every((e) => e.getBoundingClientRect().height <= 64)), 'one line an evening');
     check(/^Friday, Jun 26 and beyond: too early to call$/.test((await rows.nth(6).innerText()).trim()), 'one line: “Friday, Jun 26 and beyond: too early to call”');
-    check(await page.locator(CUR + '.best').count() <= 1, 'at most one best evening');
-    const exp = [0, 1, 2].map((d) => expectedDenver(d).rating).filter((r) => r.verdict === 'go').sort((a, b) => b.score - a.score)[0];
-    check(!exp || (await page.locator(CUR + '.day:has(.best) .sc').innerText()) === exp.score.toFixed(1), 'the best evening is the highest Go among tonight and the next two');
+    const marks = await page.locator(CUR + 'button.day').evaluateAll((els) => els.map((e) => (e.querySelector('.best') || {}).textContent || ''));
+    check(marks.every((m, i) => { const r = expectedDenver(i).rating; return m === (r.verdict !== 'go' ? '' : r.score >= 4.5 ? 'Great' : 'Good'); }), `each Go evening is marked Good, or Great from 4.5 (${marks.join('|')})`);
     await page.locator(CUR + '.daily').scrollIntoViewIfNeeded();
     await shot(page, 'phone-week');
     await layout(page, 'place page (phone)'); await contrast(page, 'place page');

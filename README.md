@@ -13,7 +13,7 @@ leave, what to bring, and when to head home. It is in the same family as
 [Two Degrees](https://github.com/bradleycowdrey/two-degrees) and
 [Bearings](https://github.com/bradleycowdrey/bearings), and shows imperial and metric side by side.
 
-This is **Release 1** of the plan in [docs/SPEC.md](docs/SPEC.md). Version 0.9.1.
+This is **Release 1** of the plan in [docs/SPEC.md](docs/SPEC.md). Version 0.9.2.
 
 ## What it does
 
@@ -28,7 +28,7 @@ This is **Release 1** of the plan in [docs/SPEC.md](docs/SPEC.md). Version 0.9.1
   forecast: the better the sunset, the more vivid the screen, with drifting clouds lit from below.
 - **Laid out as Two Degrees lays out a city**: the reading on the sky in thin, large type; one line an
   evening with a bar for its colour; and a tile, with its own graphic, for every input to the score: colour,
-  cloud cover, cloud toward the sunset, air clarity, visibility, wind, feels like, rain, humidity and the sunset.
+  cloud cover, cloud toward the sunset, air clarity, visibility, wind, feels like, rain and humidity.
 - **Golden Hour Places**: where to watch from near each location, in four parts: landmarks that are easy to
   reach, adventurous places that take some effort, dining with a view (may need a booking), and your own
   spots. The top three of each sit at the foot of every location's page; each opens on its own screen with
@@ -37,8 +37,8 @@ This is **Release 1** of the plan in [docs/SPEC.md](docs/SPEC.md). Version 0.9.1
 - **Share in one tap**: tonight's sunset (with a picture of the sky), any place, or the app itself.
 - **The moon this evening**: its phase and the month at a glance, where it is in the sky as the sun goes
   down, moonrise and moonset, moonlight for the walk back, and how near it is.
-- **The evening's times**: golden hour, the best window, sunset, the afterglow and last light.
-- **The week**: six rated evenings, the best one marked, and four more with their sunset times. Days three
+- **The evening**: the sun's way down drawn over its times (golden hour, best light, sunset, the afterglow and last light), with where it sets.
+- **The week**: six rated evenings, each Go marked Good or Great, and four more with their sunset times. Days three
   to five are an outlook; beyond that it says "Too early to call".
 - **Compare places** side by side for the same evenings.
 - **A plan for a spot you pin on the map**: leave by, meet at, sunset, stay until, head back by; what to

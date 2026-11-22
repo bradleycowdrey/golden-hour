@@ -541,14 +541,43 @@
   /** The sun against the horizon at one moment of the evening: `y` is its centre, 12 on the horizon. */
   const sunGlyph = (name) => use(name);
   /** The evening, as Two Degrees shows the next 24 hours: one line about it, then a column for each moment. */
+  /** The sun's way down, drawn over the five times: gold while it is up, on the line at sunset, the glow
+      after, and the first stars at last light. The better the colour, the stronger the sky. */
+  const EV_Y = (x) => 6.75 + 0.36 * x - 0.0003 * x * x;
+  function eveningGraphic(ev, p) {
+    const t = ev.times, c = ev.rating ? ev.rating.colour : 0.5, glow = (0.35 + 0.65 * c).toFixed(2);
+    const marks = [t.goldenStart, t.bestStart, t.sunset, t.afterglowEnd, t.lastLight], n = now();
+    let nowX = null;
+    if (marks.every((m) => m != null) && n >= marks[0] - 3600000 && n <= marks[4]) {
+      if (n < marks[0]) nowX = 50 - (marks[0] - n) / 3600000 * 50;
+      else for (let i = 0; i < 4; i++) if (n <= marks[i + 1]) { nowX = 50 + 100 * (i + (n - marks[i]) / Math.max(1, marks[i + 1] - marks[i])); break; }
+    }
+    const here = nowX == null ? '' : `<g class="evnow"><circle cx="${nowX.toFixed(1)}" cy="${EV_Y(nowX).toFixed(1)}" r="6.500" fill="#fff"/><circle cx="${nowX.toFixed(1)}" cy="${EV_Y(nowX).toFixed(1)}" r="11" fill="none" stroke="#fff" stroke-width="1.500" opacity=".55"/></g>`;
+    return `<svg class="evpath" viewBox="0 0 500 124" role="img" aria-label="The sun’s way down through the evening${nowX == null ? '' : ', with where it is now'}">
+      <g opacity="${glow}"><rect x="0" y="0" width="500" height="78" fill="url(#ev-sky)"/></g><rect x="0" y="0" width="500" height="78.500" fill="url(#ev-fade)"/>
+      <rect x="0" y="78" width="500" height="46" fill="url(#ev-ground)"/>
+      <ellipse cx="250" cy="78" rx="${(70 + 60 * c).toFixed(0)}" ry="${(30 + 26 * c).toFixed(0)}" fill="url(#ev-halo)" clip-path="url(#ev-above)"/>
+      <ellipse cx="350" cy="78" rx="${(60 + 50 * c).toFixed(0)}" ry="${(16 + 16 * c).toFixed(0)}" fill="url(#ev-ember)" clip-path="url(#ev-above)"/>
+      <path d="M0 6.750Q250 96.750 500 111.750" fill="none" stroke="url(#ev-line)" stroke-width="2.500" stroke-linecap="round" clip-path="url(#ev-above)"/>
+      <path d="M0 6.750Q250 96.750 500 111.750" fill="none" stroke="#fff" stroke-width="2" stroke-dasharray="2 7" stroke-linecap="round" opacity=".4" clip-path="url(#ev-below)"/>
+      <circle cx="50" cy="24" r="20" fill="url(#ev-halo)"/><circle cx="50" cy="24" r="10" fill="#FFE27A"/>
+      <circle cx="150" cy="54" r="19" fill="url(#ev-halo)"/><circle cx="150" cy="54" r="10" fill="#FFB347"/>
+      <circle cx="250" cy="78" r="13" fill="url(#ev-set)" clip-path="url(#ev-above)"/>
+      <circle cx="350" cy="96" r="7" fill="#232125" stroke="#FF9C8A" stroke-width="2" opacity=".9"/>
+      <circle cx="450" cy="108" r="5" fill="#232125" stroke="#B9A7FF" stroke-width="1.800" opacity=".8"/>
+      <path d="M0 78h500" stroke="#fff" stroke-width="1.500" opacity=".7"/>
+      <g fill="#fff"><path d="m450 30 2 6 6 2-6 2-2 6-2-6-6-2 6-2z"/><circle cx="478" cy="52" r="1.800" opacity=".8"/><circle cx="424" cy="56" r="1.500" opacity=".7"/><circle cx="470" cy="18" r="1.300" opacity=".6"/><circle cx="404" cy="24" r="1.200" opacity=".45"/></g>
+      ${here}</svg>`;
+  }
   function eveningCard(ev, p) {
     const t = ev.times, r = ev.rating, f = (ms) => (ms == null ? '–' : esc(timeText(ms, p.tz))), all = t.state === 'twilight';
-    const col = (label, time, glyph, cls) => `<div class="hour${cls || ''}"><span class="h">${label}</span><span class="ic">${glyph}</span><span class="f num">${time}</span></div>`;
+    const col = (label, time, cls) => `<div class="hour${cls || ''}"><span class="h">${label}</span><span class="f num">${time}</span></div>`;
     const line = r ? esc(r.reason) : all ? 'Twilight lasts all night at this time of year.' : 'The best colour often comes after the sun is down.';
-    return `<section class="card"><p class="eyebrow">${TI.clock}<span>The evening</span><span class="sp"></span><span class="aside">Sets to the ${esc(compass(t.azimuth))}</span></p>
+    return `<section class="card"><p class="eyebrow">${TI.clock}<span>The evening</span><span class="sp"></span><span class="aside">Sets ${pointOf(t.azimuth)} · ${Math.round(t.azimuth)}°</span></p>
       <p class="summary">${line}</p>${r ? deltaLine(p, ev) : ''}<hr class="rule">
-      <div class="times">${col('Golden', f(t.goldenStart), sunGlyph('sun'))}${col('Best light', f(t.bestStart), sunGlyph('sun-low'))}${col('Sunset', f(t.sunset), sunGlyph('sunset-down'), ' sun')}${col('Afterglow', all ? 'All night' : f(t.afterglowEnd), sunGlyph('afterglow'))}${col('Last light', all ? '–' : f(t.lastLight), sunGlyph('moon-stars'))}</div>
-      <p class="small muted" data-gap>${all ? 'It never gets fully dark.' : 'Stay through the afterglow: the best colour often comes after the sun is down.'}</p></section>`;
+      ${eveningGraphic(ev, p)}
+      <div class="times">${col('Golden', f(t.goldenStart))}${col('Best light', f(t.bestStart))}${col('Sunset', f(t.sunset), ' sun')}${col('Afterglow', all ? 'All night' : f(t.afterglowEnd))}${col('Last light', all ? '–' : f(t.lastLight))}</div>
+      <p class="small muted" data-gap>${all ? 'It never gets fully dark.' : `Best light ${f(t.bestStart)} to ${f(t.bestEnd)}. Stay through the afterglow: the best colour often comes after the sun is down.`}</p></section>`;
   }
 
   // ---------- The tiles: every input to the score, each with its own graphic, as in Two Degrees ----------
@@ -591,7 +620,6 @@
       <g transform="rotate(${to.toFixed(0)} 36 36)"><path d="M36 13l5 9h-3.800v24a2.700 2.700 0 1 1-2.400 0V22H31z" fill="var(--acc)"/></g></svg>`;
   }
   /** The sun's path over the day, the horizon, and the moment it sets. */
-  const sunPathSvg = () => `<div class="sunpath" aria-hidden="true"><svg viewBox="0 0 100 34" preserveAspectRatio="none"><path d="M0 22H100" stroke="rgba(255,255,255,.3)" stroke-width="1" vector-effect="non-scaling-stroke" fill="none"/><path d="M0 31C22 31 30 5 50 5S78 31 100 31" stroke="var(--acc)" stroke-width="1.600" vector-effect="non-scaling-stroke" fill="none" opacity=".85"/></svg><u></u></div>`;
   /** The moon as it is lit: phase 0 new, 0.25 first quarter, 0.5 full, 0.75 last quarter. */
   function moonSvg(phase, size) {
     const r = 15, k = Math.cos(phase * 2 * Math.PI), waxing = phase < 0.5, rx = Math.abs(k) * r, id = uid();
@@ -717,9 +745,6 @@
       out.push(tile('damp', TI.damp, 'Humidity', `${pc(x.humidity)}%`, '', sbar('dampbar', x.humidity || 0), (x.humidity || 0) > 85 ? 'Damp air mutes the reds and oranges.' : 'Dry enough for clean colour.'));
     }
     if (t.sunset != null) {
-      // Where and when the sun goes down.
-      out.push(tile('sun', TI.sun, 'Sunset', esc(timeText(t.sunset, p.tz)), `${pointOf(t.azimuth)} · ${Math.round(t.azimuth)}°`, sunPathSvg(),
-        t.state === 'twilight' ? 'Twilight lasts all night.' : `Best light ${esc(timeText(t.bestStart, p.tz))} to ${esc(timeText(t.bestEnd, p.tz))}.`));
       // The moon: its own tiles.
       out.push(...moonTiles(t, p, t.state === 'ok' ? t.lastLight : t.sunset + 90 * MIN));
     }
@@ -824,8 +849,8 @@
       the colour, and the colour class over the sunset time. */
   function dayRow(ev, p, evs, best, shown) {
     const label = ev.day === 0 ? 'Today' : ev.day === 1 ? 'Tomorrow' : dayName(ev.date, true), short = ev.day === 0 ? 'Today' : dayName(ev.date);
-    const isBest = best && best.ev.date === ev.date;
-    const d = `<span class="d">${esc(short)}${isBest ? `<small class="best">${best.label === 'Best evening' ? 'Best' : 'Likely best'}</small>` : ''}</span>`;
+    const mark = !ev.rating || ev.rating.verdict !== 'go' ? '' : ev.rating.score >= 4.5 ? 'Great' : 'Good';
+    const d = `<span class="d">${esc(short)}${mark ? `<small class="best">${mark}</small>` : ''}</span>`;
     const sunset = ev.times.sunset == null ? '' : esc(timeText(ev.times.sunset, p.tz));
     if (ev.times.state === 'none') return `<div class="day none">${d}<span class="why">No sunset here on this date</span><span class="hi"></span></div>`;
     if (!ev.rating) return `<div class="day none">${d}<span class="why">${ev.day > 5 ? 'Too early to call' : 'No forecast yet'}</span><span class="hi"><span>Sunset ${sunset}</span></span></div>`;

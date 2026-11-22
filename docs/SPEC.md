@@ -238,10 +238,10 @@ Tiers are defined by evening, counted in the place's local calendar. Day 0 is to
 - For Tonight and Forecast, when the range crosses a threshold the verdict names the nearer one:
   "Go, could slip to Maybe", "Maybe, could reach Go", "Maybe, could slip to Skip", "Skip, could
   reach Maybe". Outlook verdicts carry only "may change". Capped evenings get no qualifier.
-- **Best evening**: the highest-scoring Go evening among Tonight and Forecast.
+- **Good and Great**: in the list of evenings, every Go evening is marked Good, or Great when its score is
+  4.5 or above. No single evening is called best.
 - After last light the Tonight screen shows the next evening, but tiers do not shift until local
-  midnight: until then that evening keeps the Forecast label and range. An Outlook evening is called
-  "likely best" only when its score minus its range is still 3.5 or above.
+  midnight: until then that evening keeps the Forecast label and range. 
 - Spots of type beach, pier or peak add 0.3 to the range, with the note "Coastal and mountain cloud
   is hard to forecast."
 - Release 3.3 replaces the ranges with the spread of the score across weather models, using
@@ -563,7 +563,7 @@ replaces the earlier Tonight, Week and Plans tabs.)
      with a small sun-and-horizon glyph and the time.
    - **The next ten evenings**: one line each, as Two Degrees shows ten days: the day, the verdict
      icon and word, the score, a bar for the colour score on one shared scale, and the colour class
-     over the sunset time. Outlook rows are dimmed. The best evening is marked under its day.
+     over the sunset time. Outlook rows are dimmed. Each Go evening is marked Good or Great under its day.
    - **The tiles**: every input to the score as its own frosted card, with an accent on its title
      and a faint glow, a large reading, a graphic, and one line of what it means. **Every tile has
      a graphic.** Three run the full width because together they make the colour: Colour (the sky
