@@ -73,6 +73,16 @@ npx serve docs                       # then open the address it prints
 page) and `app.js` (fetching, storage and the interface). `docs/` is what GitHub Pages serves; never edit
 it by hand. Bump `VERSION` and rebuild to release.
 
+## iPhone (TestFlight)
+
+`ios/` holds a first iPhone app: the web app in a full-screen web view, loading the published site, which
+keeps it working offline once opened. Links that leave the site open in their own apps. It has no widget,
+notifications or calendar feed yet; those need native code.
+
+`.github/workflows/ios-testflight.yml` compiles it on every change and uploads it to TestFlight from `main`.
+The upload needs four repository secrets (`ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8`, `APPLE_TEAM_ID`) and
+an app in App Store Connect with the bundle ID `com.bradcowdrey.goldenhour`.
+
 ## Testing
 
 - `node --test tests/core.test.js`: the rating against golden vectors (`tests/fixtures/vectors.json`,
