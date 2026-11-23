@@ -13,7 +13,7 @@ leave, what to bring, and when to head home. It is in the same family as
 [Two Degrees](https://github.com/bradleycowdrey/two-degrees) and
 [Bearings](https://github.com/bradleycowdrey/bearings), and shows imperial and metric side by side.
 
-This is **Release 1** of the plan in [docs/SPEC.md](docs/SPEC.md). Version 0.9.1.
+This is **Release 1** of the plan in [docs/SPEC.md](docs/SPEC.md). Version 0.9.3.
 
 ## What it does
 
@@ -28,17 +28,21 @@ This is **Release 1** of the plan in [docs/SPEC.md](docs/SPEC.md). Version 0.9.1
   forecast: the better the sunset, the more vivid the screen, with drifting clouds lit from below.
 - **Laid out as Two Degrees lays out a city**: the reading on the sky in thin, large type; one line an
   evening with a bar for its colour; and a tile, with its own graphic, for every input to the score: colour,
-  cloud cover, cloud toward the sunset, air clarity, visibility, wind, feels like, rain, humidity and the sunset.
+  cloud cover, cloud toward the sunset, air clarity, visibility, wind, feels like, rain and humidity.
 - **Golden Hour Places**: where to watch from near each location, in four parts: landmarks that are easy to
   reach, adventurous places that take some effort, dining with a view (may need a booking), and your own
   spots. The top three of each sit at the foot of every location's page; each opens on its own screen with
   directions, tonight's rating there and "Plan this evening here". Ranked from OpenStreetMap: well-known
   places and places named for the sunset first.
+- **Where to watch, straight under the rating**: ideas to swipe through, so the first screen answers "is it
+  worth it?" and "where could I go?". Each place links to Google Maps for photos and reviews.
+- **Tap an evening for its detail** in a sheet over the page, as in Two Degrees: swipe or use the arrows to
+  move between evenings; the location's page stays where it was.
 - **Share in one tap**: tonight's sunset (with a picture of the sky), any place, or the app itself.
 - **The moon this evening**: its phase and the month at a glance, where it is in the sky as the sun goes
   down, moonrise and moonset, moonlight for the walk back, and how near it is.
-- **The evening's times**: golden hour, the best window, sunset, the afterglow and last light.
-- **The week**: six rated evenings, the best one marked, and four more with their sunset times. Days three
+- **The evening**: the sun's way down drawn over its times (golden hour, best light, sunset, the afterglow and last light), with where it sets.
+- **The week**: six rated evenings, each Go marked Good or Great, and four more with their sunset times. Days three
   to five are an outlook; beyond that it says "Too early to call".
 - **Compare places** side by side for the same evenings.
 - **A plan for a spot you pin on the map**: leave by, meet at, sunset, stay until, head back by; what to
@@ -53,6 +57,8 @@ This is **Release 1** of the plan in [docs/SPEC.md](docs/SPEC.md). Version 0.9.1
 Golden Hour has no accounts and collects nothing. To get forecasts and places, your device sends
 coordinates to Open-Meteo and the map tile host. Fonts and the map library are served from this site.
 Places, plans and your sunset log stay in your browser.
+"Photos and reviews on Google Maps" opens Google with the place's name, only when you tap it. "Send it to
+GitHub", after you rate an evening, opens a pre-filled public report for you to review before posting.
 
 ## Run it
 
@@ -66,6 +72,16 @@ npx serve docs                       # then open the address it prints
 `web/` holds the source: `index.html`, `app.css`, `core.js` (the rules: pure functions, no network or
 page) and `app.js` (fetching, storage and the interface). `docs/` is what GitHub Pages serves; never edit
 it by hand. Bump `VERSION` and rebuild to release.
+
+## iPhone (TestFlight)
+
+`ios/` holds a first iPhone app: the web app in a full-screen web view, loading the published site, which
+keeps it working offline once opened. Links that leave the site open in their own apps. It has no widget,
+notifications or calendar feed yet; those need native code.
+
+`.github/workflows/ios-testflight.yml` compiles it on every change and uploads it to TestFlight from `main`.
+The upload needs four repository secrets (`ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8`, `APPLE_TEAM_ID`) and
+an app in App Store Connect with the bundle ID `com.bradcowdrey.goldenhour`.
 
 ## Testing
 

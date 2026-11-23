@@ -4,7 +4,7 @@
 (function () {
   'use strict';
   const G = window.GH;
-  const VERSION = '0.9.1';
+  const VERSION = '0.9.3';
   const MIN = 60000, HOUR = 3600000, DAY = 86400000;
   const $ = (sel, el) => (el || document).querySelector(sel);
   const $$ = (sel, el) => Array.from((el || document).querySelectorAll(sel));
@@ -82,7 +82,7 @@
   const dist = (km) => two(G.distanceText(km, settings.imperialFirst));
 
   // ---------- State ----------
-  const S = { places: [], current: null, dayBy: {}, view: null, plans: [], ratings: [], spots: [], results: null, notice: null, editing: false };
+  const S = { places: [], current: null, dayBy: {}, sheet: null, view: null, plans: [], ratings: [], spots: [], results: null, notice: null, editing: false };
   const DATA = {};   // placeId → {fc, source: 'live' | 'cache' | 'sample', fetchedAt, error, ceiling, prev: {date → {score, at}}, snaps: {date → snap}}
   const SAMPLE = { id: 'sample', name: 'Denver', region: 'Colorado', lat: 39.7392, lon: -104.9903, tz: 'America/Denver', sample: true };
   const place = (id) => S.places.find((p) => p.id === (id || S.current)) || S.places[0];
@@ -410,6 +410,8 @@
       if (p) skyOf(p);
     }
     drawBar(); drawBanner(); dyn(v);
+    if (S.view) S.sheet = null;
+    drawSheet();
     if (view && view.type === 'list') bindSearch();
     if (view && (view.type === 'plan' || view.type === 'shared' || view.type === 'spot' || view.type === 'addspot')) mountMap();
   }
@@ -427,6 +429,7 @@
     const top = pg.scrollTop;
     $('.inner', pg).innerHTML = pageHtml(p);
     dyn(pg); pg.scrollTop = top;
+    if (S.sheet && S.sheet.placeId === p.id) drawSheet();
     if (p.id === S.current) { skyOf(p); drawBanner(); }
   }
   /** A swipe has settled on (or is passing) another place: it becomes the current one. */
@@ -541,14 +544,43 @@
   /** The sun against the horizon at one moment of the evening: `y` is its centre, 12 on the horizon. */
   const sunGlyph = (name) => use(name);
   /** The evening, as Two Degrees shows the next 24 hours: one line about it, then a column for each moment. */
+  /** The sun's way down, drawn over the five times: gold while it is up, on the line at sunset, the glow
+      after, and the first stars at last light. The better the colour, the stronger the sky. */
+  const EV_Y = (x) => 6.75 + 0.36 * x - 0.0003 * x * x;
+  function eveningGraphic(ev, p) {
+    const t = ev.times, c = ev.rating ? ev.rating.colour : 0.5, glow = (0.35 + 0.65 * c).toFixed(2);
+    const marks = [t.goldenStart, t.bestStart, t.sunset, t.afterglowEnd, t.lastLight], n = now();
+    let nowX = null;
+    if (marks.every((m) => m != null) && n >= marks[0] - 3600000 && n <= marks[4]) {
+      if (n < marks[0]) nowX = 50 - (marks[0] - n) / 3600000 * 50;
+      else for (let i = 0; i < 4; i++) if (n <= marks[i + 1]) { nowX = 50 + 100 * (i + (n - marks[i]) / Math.max(1, marks[i + 1] - marks[i])); break; }
+    }
+    const here = nowX == null ? '' : `<g class="evnow"><circle cx="${nowX.toFixed(1)}" cy="${EV_Y(nowX).toFixed(1)}" r="6.500" fill="#fff"/><circle cx="${nowX.toFixed(1)}" cy="${EV_Y(nowX).toFixed(1)}" r="11" fill="none" stroke="#fff" stroke-width="1.500" opacity=".55"/></g>`;
+    return `<svg class="evpath" viewBox="0 0 500 124" role="img" aria-label="The sun’s way down through the evening${nowX == null ? '' : ', with where it is now'}">
+      <g opacity="${glow}"><rect x="0" y="0" width="500" height="78" fill="url(#ev-sky)"/></g><rect x="0" y="0" width="500" height="78.500" fill="url(#ev-fade)"/>
+      <rect x="0" y="78" width="500" height="46" fill="url(#ev-ground)"/>
+      <ellipse cx="250" cy="78" rx="${(70 + 60 * c).toFixed(0)}" ry="${(30 + 26 * c).toFixed(0)}" fill="url(#ev-halo)" clip-path="url(#ev-above)"/>
+      <ellipse cx="350" cy="78" rx="${(60 + 50 * c).toFixed(0)}" ry="${(16 + 16 * c).toFixed(0)}" fill="url(#ev-ember)" clip-path="url(#ev-above)"/>
+      <path d="M0 6.750Q250 96.750 500 111.750" fill="none" stroke="url(#ev-line)" stroke-width="2.500" stroke-linecap="round" clip-path="url(#ev-above)"/>
+      <path d="M0 6.750Q250 96.750 500 111.750" fill="none" stroke="#fff" stroke-width="2" stroke-dasharray="2 7" stroke-linecap="round" opacity=".4" clip-path="url(#ev-below)"/>
+      <circle cx="50" cy="24" r="20" fill="url(#ev-halo)"/><circle cx="50" cy="24" r="10" fill="#FFE27A"/>
+      <circle cx="150" cy="54" r="19" fill="url(#ev-halo)"/><circle cx="150" cy="54" r="10" fill="#FFB347"/>
+      <circle cx="250" cy="78" r="13" fill="url(#ev-set)" clip-path="url(#ev-above)"/>
+      <circle cx="350" cy="96" r="7" fill="#232125" stroke="#FF9C8A" stroke-width="2" opacity=".9"/>
+      <circle cx="450" cy="108" r="5" fill="#232125" stroke="#B9A7FF" stroke-width="1.800" opacity=".8"/>
+      <path d="M0 78h500" stroke="#fff" stroke-width="1.500" opacity=".7"/>
+      <g fill="#fff"><path d="m450 30 2 6 6 2-6 2-2 6-2-6-6-2 6-2z"/><circle cx="478" cy="52" r="1.800" opacity=".8"/><circle cx="424" cy="56" r="1.500" opacity=".7"/><circle cx="470" cy="18" r="1.300" opacity=".6"/><circle cx="404" cy="24" r="1.200" opacity=".45"/></g>
+      ${here}</svg>`;
+  }
   function eveningCard(ev, p) {
     const t = ev.times, r = ev.rating, f = (ms) => (ms == null ? '–' : esc(timeText(ms, p.tz))), all = t.state === 'twilight';
-    const col = (label, time, glyph, cls) => `<div class="hour${cls || ''}"><span class="h">${label}</span><span class="ic">${glyph}</span><span class="f num">${time}</span></div>`;
+    const col = (label, time, cls) => `<div class="hour${cls || ''}"><span class="h">${label}</span><span class="f num">${time}</span></div>`;
     const line = r ? esc(r.reason) : all ? 'Twilight lasts all night at this time of year.' : 'The best colour often comes after the sun is down.';
-    return `<section class="card"><p class="eyebrow">${TI.clock}<span>The evening</span><span class="sp"></span><span class="aside">Sets to the ${esc(compass(t.azimuth))}</span></p>
+    return `<section class="card"><p class="eyebrow">${TI.clock}<span>The evening</span><span class="sp"></span><span class="aside">Sets ${pointOf(t.azimuth)} · ${Math.round(t.azimuth)}°</span></p>
       <p class="summary">${line}</p>${r ? deltaLine(p, ev) : ''}<hr class="rule">
-      <div class="times">${col('Golden', f(t.goldenStart), sunGlyph('sun'))}${col('Best light', f(t.bestStart), sunGlyph('sun-low'))}${col('Sunset', f(t.sunset), sunGlyph('sunset-down'), ' sun')}${col('Afterglow', all ? 'All night' : f(t.afterglowEnd), sunGlyph('afterglow'))}${col('Last light', all ? '–' : f(t.lastLight), sunGlyph('moon-stars'))}</div>
-      <p class="small muted" data-gap>${all ? 'It never gets fully dark.' : 'Stay through the afterglow: the best colour often comes after the sun is down.'}</p></section>`;
+      ${eveningGraphic(ev, p)}
+      <div class="times">${col('Golden', f(t.goldenStart))}${col('Best light', f(t.bestStart))}${col('Sunset', f(t.sunset), ' sun')}${col('Afterglow', all ? 'All night' : f(t.afterglowEnd))}${col('Last light', all ? '–' : f(t.lastLight))}</div>
+      <p class="small muted" data-gap>${all ? 'It never gets fully dark.' : `Best light ${f(t.bestStart)} to ${f(t.bestEnd)}. Stay through the afterglow: the best colour often comes after the sun is down.`}</p></section>`;
   }
 
   // ---------- The tiles: every input to the score, each with its own graphic, as in Two Degrees ----------
@@ -591,7 +623,6 @@
       <g transform="rotate(${to.toFixed(0)} 36 36)"><path d="M36 13l5 9h-3.800v24a2.700 2.700 0 1 1-2.400 0V22H31z" fill="var(--acc)"/></g></svg>`;
   }
   /** The sun's path over the day, the horizon, and the moment it sets. */
-  const sunPathSvg = () => `<div class="sunpath" aria-hidden="true"><svg viewBox="0 0 100 34" preserveAspectRatio="none"><path d="M0 22H100" stroke="rgba(255,255,255,.3)" stroke-width="1" vector-effect="non-scaling-stroke" fill="none"/><path d="M0 31C22 31 30 5 50 5S78 31 100 31" stroke="var(--acc)" stroke-width="1.600" vector-effect="non-scaling-stroke" fill="none" opacity=".85"/></svg><u></u></div>`;
   /** The moon as it is lit: phase 0 new, 0.25 first quarter, 0.5 full, 0.75 last quarter. */
   function moonSvg(phase, size) {
     const r = 15, k = Math.cos(phase * 2 * Math.PI), waxing = phase < 0.5, rx = Math.abs(k) * r, id = uid();
@@ -717,9 +748,6 @@
       out.push(tile('damp', TI.damp, 'Humidity', `${pc(x.humidity)}%`, '', sbar('dampbar', x.humidity || 0), (x.humidity || 0) > 85 ? 'Damp air mutes the reds and oranges.' : 'Dry enough for clean colour.'));
     }
     if (t.sunset != null) {
-      // Where and when the sun goes down.
-      out.push(tile('sun', TI.sun, 'Sunset', esc(timeText(t.sunset, p.tz)), `${pointOf(t.azimuth)} · ${Math.round(t.azimuth)}°`, sunPathSvg(),
-        t.state === 'twilight' ? 'Twilight lasts all night.' : `Best light ${esc(timeText(t.bestStart, p.tz))} to ${esc(timeText(t.bestEnd, p.tz))}.`));
       // The moon: its own tiles.
       out.push(...moonTiles(t, p, t.state === 'ok' ? t.lastLight : t.sunset + 90 * MIN));
     }
@@ -735,6 +763,43 @@
     if (snap && snap.takenOn === localDate(now(), p.tz) && snap.fetchedAt < d.fetchedAt) return say(snap.score, 'since this morning');
     if (prev) return say(prev.score, `since you last looked at ${esc(timeText(prev.at, p.tz))}`);
     return '';
+  }
+
+  // ---------- A day's detail: a sheet over the location's page, as in Two Degrees ----------
+  const sheetDays = (evs) => evs.map((e, i) => (e.rating ? i : -1)).filter((i) => i >= 0);
+  function sheetHtml() {
+    const p = place(S.sheet.placeId), evs = p ? evenings(p) : [], ev = evs[S.sheet.day], r = ev && ev.rating;
+    if (!p || !r) { S.sheet = null; return ''; }
+    const days = sheetDays(evs), at = days.indexOf(S.sheet.day), label = evLabel(ev, p, evs);
+    const arrow = (d, on) => `<button type="button" class="circle sm" data-act="sheet-step" data-d="${d}" aria-label="${d < 0 ? 'The evening before' : 'The next evening'}"${on ? '' : ' disabled'}>${d < 0 ? '‹' : '›'}</button>`;
+    const warns = r.warnings.map((w) => `<div class="warn" role="note">${ICON.warn}<span>${esc(w.text)}</span></div>`).join('');
+    const cta = now() < endOf(ev, p) ? `<div class="cta"><button type="button" class="btn white" data-act="plan-new" data-date="${ev.date}">Plan this evening</button></div>` : '';
+    return `<div class="sh-head"><button type="button" class="done" data-act="sheet-close">Done</button><h2 id="sheetTitle">${esc(dayName(ev.date, true))}, ${esc(dateText(ev.date))}</h2><span class="nav">${arrow(-1, at > 0)}${arrow(1, at < days.length - 1)}</span></div>
+      <section class="hero sheethero" aria-label="${esc(spoken(label, r))}"><p class="when">${esc(p.name)} · ${esc(label)}</p>
+        <div class="score" aria-hidden="true"><span class="n">${scoreText(r)}</span><span class="of">/ 5</span></div>
+        <div aria-hidden="true">${stars(r.tier === 'outlook' ? r.shown : r.score, r.tier === 'outlook')}</div>
+        <p class="cond colour c-${r.colourClass.toLowerCase()}" aria-hidden="true"><b>${r.colourClass}</b> colour <span class="n num">· ${r.colour}</span></p>
+        <p class="hilo verdict ${r.verdict}" aria-hidden="true">${icon(r)}<span>${r.verdictWord}${r.qualifier ? `<span class="q">, ${esc(r.qualifier)}</span>` : ''}</span></p>
+        <p class="hilo other range" aria-hidden="true">${r.tier === 'outlook' ? 'Outlook' : r.tier === 'forecast' ? 'Forecast' : 'Tonight'} · ${rangeText(r)} (typical)</p></section>
+      ${warns}${cta}${eveningCard(ev, p)}${tilesHtml(ev, p)}`;
+  }
+  function drawSheet(focus) {
+    const back = $('#sheetback');
+    if (!back) return;
+    const html = S.sheet ? sheetHtml() : '';
+    document.body.classList.toggle('sheet-open', !!S.sheet);
+    if (!S.sheet) { back.hidden = true; back.innerHTML = ''; return; }
+    const top = back.scrollTop;
+    back.hidden = false;
+    back.innerHTML = `<div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle" tabindex="-1">${html}</div>`;
+    dyn(back);
+    if (focus) { back.scrollTop = 0; $('#sheet').focus({ preventScroll: true }); } else back.scrollTop = top;
+  }
+  function stepSheet(d) {
+    if (!S.sheet) return;
+    const days = sheetDays(evenings(place(S.sheet.placeId))), next = days[days.indexOf(S.sheet.day) + d];
+    if (next == null) return;
+    S.sheet.day = next; drawSheet(true);
   }
 
   /** One place's page, laid out as Two Degrees lays out a city: the reading on the sky, the evening, the ten
@@ -768,8 +833,8 @@
     const back = S.dayBy[p.id] != null && S.dayBy[p.id] !== f ? `<button type="button" class="btn quiet back" data-act="day" data-day="">‹ Back to ${f === 1 ? 'tomorrow' : 'tonight'}</button>` : '';
     const best = bestOf(evs);
     const week = `<section class="card daily"><p class="eyebrow">${TI.cal}<span>The evenings ahead</span><span class="sp"></span><span class="aside">Colour</span></p><div class="days">${evs.filter((e) => e.rating || e.times.state === 'none' || e.day <= 5).map((e) => dayRow(e, p, evs, best, ev)).join('')}${(() => { const later = evs.find((e) => !e.rating && e.day > 5); return later ? `<div class="day later"><span class="why">${esc(dayName(later.date, true))}, ${esc(dateText(later.date))} and beyond: too early to call</span></div>` : ''; })()}</div>
-      <p class="small muted" data-gap>The bar is the colour score. Tap an evening to see it above. Days three to five are an outlook and may change.</p></section>`;
-    return `${back}<div class="two"><div class="col">${hero}${warns}${cta}${sample}</div><div class="col">${howWasIt(p, evs)}${ev.times.state === 'none' ? '' : eveningCard(ev, p)}${week}</div></div>${tilesHtml(ev, p)}${placesSection(p)}${footHtml()}`;
+      <p class="small muted" data-gap>The bar is the colour score. Tap an evening for its detail. Days three to five are an outlook and may change.</p></section>`;
+    return `${back}<div class="two"><div class="col">${hero}${warns}${ev.times.state === 'none' ? '' : placesStrip(p)}${cta}${sample}</div><div class="col">${howWasIt(p, evs)}${ev.times.state === 'none' ? '' : eveningCard(ev, p)}${week}</div></div>${tilesHtml(ev, p)}${placesSection(p)}${footHtml()}`;
   }
   const compass = (deg) => ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'][Math.round(G.normalize(deg) / 45) % 8];
 
@@ -785,7 +850,11 @@
     return { date, predicted: d.logged[date] };
   }
   function howWasIt(p, evs) {
-    const q = pendingRating(p, evs);
+    const q = pendingRating(p, evs), j = S.justRated;
+    if (!q && j && j.placeId === p.id) return `<section class="card" id="ratedCard"><p class="eyebrow">Thanks</p>
+      <p>You said ${j.observed} of 5; we forecast ${j.predicted.toFixed(1)}. It’s saved in your sunset log on this device.</p>
+      <div class="row" data-gap><a class="btn white" target="_blank" rel="noopener" href="${esc(feedbackUrl([j]))}">Send it to GitHub</a><button type="button" class="btn" data-act="log">My sunset log</button></div>
+      <p class="small muted" data-gap>Sending opens a pre-filled, public report on GitHub for you to review first. It names ${esc(p.name)}, never where you stood.</p></section>`;
     if (!q) return '';
     const words = ['Nothing', 'Dull', 'Pleasant', 'Lovely', 'Stunning'];
     return `<section class="card" id="howWasIt"><p class="eyebrow">How was it?</p>
@@ -815,7 +884,7 @@
     : '<p class="empty">No evenings rated yet. After last light, Golden Hour asks how the sunset was.</p>'}</section>`;
   }
   function feedbackUrl(rows) {
-    const body = 'My Golden Hour sunset log (forecast → what I saw):\n\n' + rows.slice(0, 40).map((r) => `${r.date}  forecast ${r.predicted.toFixed(1)}  saw ${r.observed}/5  parts c${r.parts.c.toFixed(2)} s${r.parts.s.toFixed(2)} a${r.parts.a.toFixed(2)} k${r.parts.k.toFixed(2)}`).join('\n');
+    const body = 'My Golden Hour sunset log (forecast → what I saw):\n\n' + rows.slice(0, 40).map((r) => `${r.date}  ${(S.places.find((x) => x.id === r.placeId) || { name: '?' }).name}  forecast ${r.predicted.toFixed(1)}  saw ${r.observed}/5  parts c${r.parts.c.toFixed(2)} s${r.parts.s.toFixed(2)} a${r.parts.a.toFixed(2)} k${r.parts.k.toFixed(2)}`).join('\n');
     return 'https://github.com/bradleycowdrey/golden-hour/issues/new?title=' + encodeURIComponent('Sunset log') + '&body=' + encodeURIComponent(body);
   }
 
@@ -824,8 +893,8 @@
       the colour, and the colour class over the sunset time. */
   function dayRow(ev, p, evs, best, shown) {
     const label = ev.day === 0 ? 'Today' : ev.day === 1 ? 'Tomorrow' : dayName(ev.date, true), short = ev.day === 0 ? 'Today' : dayName(ev.date);
-    const isBest = best && best.ev.date === ev.date;
-    const d = `<span class="d">${esc(short)}${isBest ? `<small class="best">${best.label === 'Best evening' ? 'Best' : 'Likely best'}</small>` : ''}</span>`;
+    const mark = !ev.rating || ev.rating.verdict !== 'go' ? '' : ev.rating.score >= 4.5 ? 'Great' : 'Good';
+    const d = `<span class="d">${esc(short)}${mark ? `<small class="best">${mark}</small>` : ''}</span>`;
     const sunset = ev.times.sunset == null ? '' : esc(timeText(ev.times.sunset, p.tz));
     if (ev.times.state === 'none') return `<div class="day none">${d}<span class="why">No sunset here on this date</span><span class="hi"></span></div>`;
     if (!ev.rating) return `<div class="day none">${d}<span class="why">${ev.day > 5 ? 'Too early to call' : 'No forecast yet'}</span><span class="hi"><span>Sunset ${sunset}</span></span></div>`;
@@ -1132,6 +1201,31 @@
 
   const away = (s) => `${s.km < 0.2 ? 'Here' : `${esc(G.distanceText(s.km, settings.imperialFirst, true))} · about ${s.travel} min`}`;
   /** One row for a place: its picture, name, what it is, how far and how hard. */
+  /** The place on Google Maps, to see photos and what kind of place it is. Opens Google; nothing is sent until tapped. */
+  function mapsUrl(s, p) {
+    const named = s.cat !== 'own' && s.name;
+    const q = named ? [s.name, p && p.name, p && p.region].filter(Boolean).join(', ') : `${s.lat},${s.lon}`;
+    return 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(q);
+  }
+  /** Straight under the rating: ideas for where to go, to swipe through. Your own spots first, then the
+      top of each kind in turn. */
+  function placesStrip(p) {
+    const s = allSpots(p), d = DATA[p.id] || {}, mine = ownSpots(p);
+    if (!s && d.spots === 'error' && !mine.length) return '';
+    const head = `<div class="striphead"><h3>Where to watch</h3><button type="button" class="link" data-act="spots-all" data-place="${esc(p.id)}">See all</button></div>`;
+    if (!s && !mine.length) return `<section class="strip" aria-label="Where to watch" aria-busy="true">${head}<div class="striprow">${'<span class="scard bone"></span>'.repeat(3)}</div></section>`;
+    const picks = mine.slice(0, 2);
+    if (s) for (let i = 0; i < 3; i++) for (const c of CATS) if (s[c.key][i]) picks.push(s[c.key][i]);
+    if (!picks.length) return '';
+    const card = (x) => {
+      const effort = x.cat === 'own' ? 'Your spot' : x.cat === 'dining' ? 'May need a booking' : EFFORT[x.effort] || '';
+      return `<button type="button" class="scard a-${x.cat}" data-act="spot-open" data-id="${esc(x.id)}" data-place="${esc(p.id)}">
+        <span class="sbadge c-${x.cat} k-${kindIconName(x)}" aria-hidden="true">${kindIcon(x)}</span>
+        <span class="n">${esc(x.name)}</span><span class="r">${esc(x.kind || G.SPOT_CAT[x.cat] || '')} · ${away(x)}</span>
+        <span class="e e-${esc(x.cat === 'own' ? 'own' : x.effort || 'own')}">${esc(effort)}</span></button>`;
+    };
+    return `<section class="strip" aria-label="Where to watch">${head}<div class="striprow" tabindex="0">${picks.map(card).join('')}</div></section>`;
+  }
   function spotRow(s, p, i) {
     const effort = s.cat === 'own' ? 'Your spot' : s.cat === 'dining' ? 'May need a booking' : EFFORT[s.effort] || '';
     return `<button type="button" class="srow" data-act="spot-open" data-id="${esc(s.id)}" data-place="${esc(p.id)}">
@@ -1201,6 +1295,7 @@
         <button type="button" class="circle" data-act="share-spot" aria-label="Share ${esc(sp.name)}">${SP.share}</button></div>
       <section class="hero spothero"><span class="sbadge big c-${sp.cat} k-${kindIconName(sp)}" aria-hidden="true">${kindIcon(sp)}</span><h2>${esc(sp.name)}</h2><p class="when">${esc(sp.kind || G.SPOT_CAT[sp.cat] || 'Your spot')} · ${esc(effort)}</p>${v.shared ? '<p class="when">Shared with you</p>' : ''}</section>
       <div class="cta row center"><button type="button" class="btn primary" data-act="spot-plan">Plan this evening here</button><a class="btn white" target="_blank" rel="noopener" href="${esc(directionsUrl(sp))}">${SP.car}Directions</a></div>
+      <div class="cta row center"><a class="btn glink" target="_blank" rel="noopener" href="${esc(mapsUrl(sp, p))}">${SP.landmark}Photos and reviews on Google Maps</a></div>
       <div class="two"><div class="col">
         <section class="card"><p class="eyebrow">${SP.landmark}<span>Where</span></p><div class="map" id="map"><div class="msg">Loading the map…</div></div></section>
         ${tonight}
@@ -1518,13 +1613,16 @@
     add(el) { const r = S.results[Number(el.dataset.i)]; if (r) addPlace(r); },
     locate() { locate(async (lat, lon) => { const n = await nameNear(lat, lon); addPlace({ ...n, lat, lon, tz: deviceTz() }, true); }); },
     async retry() { const p = place(); DATA[p.id].error = null; update(p); await load(p, true); update(p); },
-    day(el) { const p = place(); S.dayBy[p.id] = el.dataset.day === '' ? null : Number(el.dataset.day); update(p); const pg = $$('.page').find((x) => x.dataset.id === p.id); if (pg) pg.scrollTo({ top: 0 }); },
-    cell(el) { S.dayBy[el.dataset.id] = Number(el.dataset.day); scrolls[el.dataset.id] = 0; goTo(el.dataset.id); },
+    day(el) { if (el.dataset.day === '') return; S.sheet = { placeId: place().id, day: Number(el.dataset.day) }; drawSheet(true); },
+    cell(el) { goTo(el.dataset.id); S.sheet = { placeId: el.dataset.id, day: Number(el.dataset.day) }; drawSheet(true); },
+    'sheet-close'() { S.sheet = null; drawSheet(); },
+    'sheet-step'(el) { stepSheet(Number(el.dataset.d)); },
     compare() { settings.compare = !settings.compare; store.set('compare', settings.compare); render(); if (settings.compare) loadAll(); },
     async rate(el) {
       const p = place(), date = el.dataset.date, v = Number(el.dataset.v), rec = DATA[p.id].logged[date];
       const r = { placeId: p.id, date, predicted: rec.score, parts: rec.parts, observed: v || null, at: now() };
       S.ratings.push(r); await db.put('ratings', r);
+      S.justRated = v ? r : null;
       update(p); toast(v ? 'Thanks. Saved to your sunset log.' : 'Noted.');
     },
     log() { S.view = { type: 'log' }; render(); },
@@ -1565,6 +1663,17 @@
     const fn = ACT[el.dataset.act];
     if (fn) fn(el);
   });
+  // The sheet: a tap outside it closes it; a sideways swipe moves between evenings.
+  {
+    const back = $('#sheetback'); let swipe = null;
+    back.addEventListener('click', (e) => { if (e.target === back) ACT['sheet-close'](); });
+    back.addEventListener('touchstart', (e) => { swipe = e.touches.length === 1 ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : null; }, { passive: true });
+    back.addEventListener('touchend', (e) => {
+      if (!swipe) return;
+      const t = e.changedTouches[0], dx = t.clientX - swipe.x, dy = t.clientY - swipe.y; swipe = null;
+      if (Math.abs(dx) >= 50 && Math.abs(dx) > Math.abs(dy) * 1.5) stepSheet(dx < 0 ? 1 : -1);
+    }, { passive: true });
+  }
   document.addEventListener('change', (e) => {
     const t = e.target;
     if (t.dataset && t.dataset.act === 'tick') return ACT.tick(t);
@@ -1583,6 +1692,11 @@
   });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && e.target.id === 'newItem') return ACT['item-add']();
+    if (S.sheet) {
+      if (e.key === 'Escape') ACT['sheet-close']();
+      else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); stepSheet(e.key === 'ArrowRight' ? 1 : -1); }
+      return;
+    }
     if (S.view || /INPUT|SELECT|TEXTAREA/.test(e.target.tagName) || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
     const next = S.places[S.places.findIndex((p) => p.id === S.current) + (e.key === 'ArrowRight' ? 1 : -1)];
     if (next) goTo(next.id, true);
