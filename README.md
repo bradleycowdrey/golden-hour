@@ -80,7 +80,7 @@ keeps it working offline once opened. Links that leave the site open in their ow
 notifications or calendar feed yet; those need native code.
 
 `.github/workflows/ios-testflight.yml` compiles it on every change and uploads it to TestFlight from `main`.
-The upload needs four repository secrets (`ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8`, `APPLE_TEAM_ID`) and
+The upload needs three repository secrets (`ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8`) and
 an app in App Store Connect with the bundle ID `com.bradcowdrey.goldenhour`.
 
 ## Testing
