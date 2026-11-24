@@ -4,7 +4,7 @@
 (function () {
   'use strict';
   const G = window.GH;
-  const VERSION = '0.9.5';
+  const VERSION = '0.10.0';
   const MIN = 60000, HOUR = 3600000, DAY = 86400000;
   const $ = (sel, el) => (el || document).querySelector(sel);
   const $$ = (sel, el) => Array.from((el || document).querySelectorAll(sel));

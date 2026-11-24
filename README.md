@@ -13,51 +13,40 @@ leave, what to bring, and when to head home. It is in the same family as
 [Two Degrees](https://github.com/bradleycowdrey/two-degrees) and
 [Bearings](https://github.com/bradleycowdrey/bearings), and shows imperial and metric side by side.
 
-This is **Release 1** of the plan in [docs/SPEC.md](docs/SPEC.md). Version 0.9.5.
+This is **Release 1** of the plan in [docs/SPEC.md](docs/SPEC.md). Version 0.10.0.
 
 ## What it does
 
-- **A star rating for each evening, led by colour.** Colour in the clouds is 70% of the score and gets
-  its own class under the stars: Brilliant, Rich, Warm, Soft or Muted. A cloudless evening is not a Go.
-  It reads cloud at three heights here and up to 300 km toward the sunset, haze, wind and how the
-  temperature compares with what is usual for the place. Each evening also has a verdict (Go, Maybe,
-  Skip), a range and one plain sentence of why. Tap to see the four parts behind the score.
-- **A page for each place, swiped between**, as in Two Degrees on the iPhone: each on its own evening's
-  sky, with a dot for each place and a list of them all.
-- **The sky behind each place is its sunset.** A picture of the evening as it might look, drawn from the
-  forecast: the better the sunset, the more vivid the screen, with drifting clouds lit from below.
-- **Laid out as Two Degrees lays out a city**: the reading on the sky in thin, large type; one line an
-  evening with a bar for its colour; and a tile, with its own graphic, for every input to the score: colour,
-  cloud cover, cloud toward the sunset, air clarity, visibility, wind, feels like, rain and humidity.
-- **Golden Hour Places**: where to watch from near each location, in four parts: landmarks that are easy to
-  reach, adventurous places that take some effort, dining with a view (may need a booking), and your own
-  spots. The top three of each sit at the foot of every location's page; each opens on its own screen with
-  directions, tonight's rating there and "Plan this evening here". Ranked from OpenStreetMap: well-known
-  places and places named for the sunset first.
-- **Where to watch, straight under the rating**: ideas to swipe through, so the first screen answers "is it
-  worth it?" and "where could I go?". Each place links to Google Maps for photos and reviews.
-- **Less on the page**: the tiles behind the score are folded behind one row until you ask for them.
-- **Tap an evening for its detail** in a sheet over the page, as in Two Degrees: swipe or use the arrows to
-  move between evenings; the location's page stays where it was.
-- **Share in one tap**: tonight's sunset (with a picture of the sky), any place, or the app itself.
-- **The moon this evening**: its phase and the month at a glance, where it is in the sky as the sun goes
-  down, moonrise and moonset, moonlight for the walk back, and how near it is.
-- **The evening**: the sun's way down drawn over its times (golden hour, best light, sunset, the afterglow and last light), with where it sets.
-- **The week**: six rated evenings, each Go marked Good or Great, and four more with their sunset times. Days three
-  to five are an outlook; beyond that it says "Too early to call".
-- **Compare places** side by side for the same evenings.
-- **A plan for a spot you pin on the map**: leave by, meet at, sunset, stay until, head back by; what to
-  bring, each with a reason; and the walk back, last light and the moon.
-- **Share the plan with one link.** The link never carries where you are leaving from.
-- **Add to calendar**, as a file any calendar opens.
-- **Works offline** once opened, including saved plans.
-- **"How was it?"** after last light, kept on your device, to tune the rating against real evenings.
+- **One answer.** Open it and the top of the page says "Go tonight", "Maybe tonight" or "Not tonight", why,
+  and one time: sunset, and when to be there. A Not tonight names the next good evening. The score, the
+  colour class and every input are one tap down, under Why.
+- **One place, one tap.** Under the answer is the place to watch from (your own nearest spot, or the top
+  easy-to-reach one) and "Plan this evening". The plan is kept from the first tap and shared in one more.
+- **Getting home.** Every plan says when to start back so the walk is done before dark, offers "Text a
+  friend where I'll be" and "I'm home", and never claims a place is lit or safe.
+- **Three places to be**: Today (a page for each location, swiped between), Plans and Places. A day, a
+  place and Settings open as sheets over the page, and Back always goes one step back.
+- **Places you can check**: landmarks, adventurous places, dining with a view and your own spots, from
+  OpenStreetMap. Each says whether the map lists parking and toilets within a short walk, links to Google
+  Maps for photos, and can be filtered by Parking, Toilets and Short walk.
+- **A chosen date and venue**: any date up to a year ahead has exact times (colour is forecast five days
+  out); find a venue by name or address; golden hour and blue hour; an arrive-by, travel time and home-by
+  you can set; a note; and "has it changed?" on every saved plan.
+- **Sharing**: a picture card for tonight, for the week and for a plan, with a link; "Send update" says
+  what changed. Add to calendar carries a reminder 30 minutes before you leave.
+- **When something fails it says so**: the last forecast stays, marked with how old it is; places say
+  "Looking for places…", then either arrive or offer Try again. Settings, Status lists what the app last
+  asked for and what came back.
+- **The sky behind each place is its sunset**, imperial and metric side by side, works offline once opened.
+
+The fix plan this build follows, with a "done when" test for each change, is [docs/FIX-PLAN.md](docs/FIX-PLAN.md).
+Before a release, walk [docs/PHONE-CHECKLIST.md](docs/PHONE-CHECKLIST.md) on a real phone.
 
 ## Privacy
 
 Golden Hour has no accounts and collects nothing. To get forecasts and places, your device sends
 coordinates to Open-Meteo and the map tile host. Fonts and the map library are served from this site.
-Places, plans and your sunset log stay in your browser.
+A venue search sends what you type to Photon (photon.komoot.io). Places, plans and your sunset log stay in your browser.
 "Photos and reviews on Google Maps" opens Google with the place's name, only when you tap it. "Send it to
 GitHub", after you rate an evening, opens a pre-filled public report for you to review before posting.
 
@@ -86,15 +75,14 @@ an app in App Store Connect with the bundle ID `com.bradcowdrey.goldenhour`.
 
 ## Testing
 
-- `node --test tests/core.test.js`: the rating against golden vectors (`tests/fixtures/vectors.json`,
-  to be shared with the Swift and Kotlin ports), every threshold and cap, the reason sentences, evening
-  times at several latitudes, plan times, the bring list, the share link and the calendar file.
-- `node --test tests/spots.test.js`: sorting and ranking Golden Hour Places, and place share links.
-- `node --test tests/moon.test.js`: the moon's phase, next full and new moons, moonrise and moonset, and moonlight.
-- `node tests/web.test.js [screenshots-dir]`: drives the built app in a browser (Playwright) with a
-  stand-in forecast: first run, search, the rating and times, the week, compare, the whole plan flow,
-  sharing, the calendar file, offline, every listed state, layout and tap targets at four widths, and
-  text contrast over the lightest sky.
+- `node --test tests/core.test.js tests/moon.test.js tests/spots.test.js`: the rules (35 tests): the rating
+  against golden vectors, evening and plan times, start-back time, light windows, the share link, the
+  calendar file, places ranking, and parking and toilets matching.
+- `node tests/web.test.js [screenshots-dir]`: drives the built app in a browser (Playwright, 210 checks) with
+  stand-in services. It walks the fix plan's "done when" lines and forces every failure: forecast down,
+  a refresh that fails, the open map down, answering with an error note, with nothing, or after 20 seconds,
+  parking lookup down, venue search down, map tiles down, location refused. Also Back from every screen,
+  a touch swipe between locations, layout and tap targets at four widths, contrast, and doubled text size.
 
 ## Not yet verified on real services
 

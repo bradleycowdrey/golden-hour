@@ -1,9 +1,16 @@
 # Golden Hour: the fix plan
 
-Version 5. Follows the functional review of 24 November 2026.
+Version 6. Follows the functional review of 24 November 2026.
 
-**What happens next:** on your go, Release A (ten fixes so the app works on a real connection and never
-loses your plan) is built and sent to TestFlight with a checklist for you to walk. Nothing new is added until A, B1 and B2 are done.
+**Status (version 0.10.0):** releases A, B1, B2 and C are built in one build, as asked, and pass the
+automated tests (35 rule tests, 210 browser checks, every failure state forced). Not yet done: the live
+pass on a real phone ([PHONE-CHECKLIST.md](PHONE-CHECKLIST.md)), the week with three testers, and a
+VoiceOver pass. The iPhone app's back swipe and calendar sheet are written and compile-checked by the
+build, but have not been run on a phone.
+
+**One change from the plan as written:** the row of places that scrolled sideways is gone. The page now
+shows one place, then up to three more as a list, so nothing on the page scrolls sideways and a swipe
+anywhere moves between locations.
 
 ## Who it is for
 

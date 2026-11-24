@@ -1,5 +1,8 @@
 # Golden Hour: plan and spec
 
+> From version 0.10.0 the screens, navigation and plan flow follow [FIX-PLAN.md](FIX-PLAN.md), which
+> replaces sections 10.1 to 10.4 where they differ. The rating rules in section 4 are unchanged.
+
 Version 15. An app by Bradley Cowdrey, in the same family as Two Degrees, Bearings and Meridian. Items marked **(verify)** come from memory or secondary sources
 and must be checked against primary documentation before they are relied on.
 
