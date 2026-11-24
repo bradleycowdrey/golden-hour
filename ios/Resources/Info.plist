@@ -44,6 +44,8 @@
     </array>
     <key>NSLocationWhenInUseUsageDescription</key>
     <string>Golden Hour uses your location to add where you are as a place, and to start directions from there. It is used only to get the forecast and places for that spot.</string>
+    <key>NSCalendarsWriteOnlyAccessUsageDescription</key>
+    <string>Golden Hour adds your sunset plan to your calendar when you ask it to.</string>
     <key>NSHumanReadableCopyright</key>
     <string>© 2026 Bradley Cowdrey · bradcowdrey.com</string>
 </dict>

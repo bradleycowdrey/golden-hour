@@ -1,7 +1,7 @@
 // Tests for the web app as built (docs/), run with Playwright:  node tests/web.test.js [screenshot-dir]
-// The page is served over HTTP as on the site, with Open-Meteo and the map tiles answered by this script,
-// and the clock fixed at midday in Denver on 20 June 2026. It walks every Release 1 feature and state in
-// docs/SPEC.md (sections 10 and 14), at phone, tablet and desktop widths.
+// The page is served over HTTP as on the site, with the forecast, the open map, the venue search and the map
+// tiles answered by this script, and the clock fixed at midday in Denver. It walks the fix plan's "done when"
+// tests (docs/FIX-PLAN.md, releases A to C), including every failure state, at phone, tablet and desktop widths.
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -31,6 +31,13 @@ const OSM = [
   { type: 'node', id: 11, lat: 39.7637, lon: -105.0102, tags: { name: 'Sky Bar', amenity: 'bar', rooftop: 'yes' } },
   { type: 'node', id: 12, lat: 39.74, lon: -104.99, tags: { name: 'Terrace Café', amenity: 'cafe', outdoor_seating: 'terrace' } },
 ];
+// Parking and toilets the map lists: both by Inspiration Point, parking only by Sunset Park, private parking (ignored) by Linger.
+const NEAR = [
+  { type: 'node', id: 101, lat: 39.7828, lon: -105.0568, tags: { amenity: 'parking' } },
+  { type: 'way', id: 102, center: { lat: 39.7825, lon: -105.0564 }, tags: { amenity: 'toilets' } },
+  { type: 'node', id: 103, lat: 39.7501, lon: -105.0401, tags: { amenity: 'parking' } },
+  { type: 'node', id: 104, lat: 39.7598, lon: -105.0114, tags: { amenity: 'parking', access: 'private' } },
+];
 const TROMSO = { name: 'Tromsø', admin1: 'Troms', country: 'Norway', latitude: 69.6492, longitude: 18.9553, timezone: 'Europe/Oslo' };
 
 let passed = 0, failed = 0;
@@ -56,11 +63,12 @@ function archiveBody() {
   for (let t = Date.UTC(1991, 0, 1); t <= Date.UTC(1992, 11, 31); t += 86400000) { time.push(new Date(t).toISOString().slice(0, 10)); max.push(24); min.push(10); }
   return { daily: { time, temperature_2m_max: max, temperature_2m_min: min } };
 }
-const expectedDenver = (day) => {
-  const date = new Date(Date.UTC(2026, 5, 20 + day));
+/** What the core says for Denver: `base` days after 20 June is "today", and `day` counts from there. */
+const expectedDenver = (day, base, normal) => {
+  const date = new Date(Date.UTC(2026, 5, 20 + (base || 0) + day));
   const t = G.eveningTimes(G.solarNoonGuess(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate(), DENVER.longitude), DENVER.latitude, DENVER.longitude);
   const aq = { time: sample.p0.time, aerosol_optical_depth: secs.map(() => 0.12), pm2_5: secs.map(() => 6), us_aqi: secs.map(() => 35) };
-  return { times: t, rating: G.rate(G.inputsAt(sample.p0, sample.up, aq, t.sunset), { day, normal: 10 + 0.65 * 14, imperialFirst: true }) };
+  return { times: t, rating: G.rate(G.inputsAt(sample.p0, sample.up, aq, t.sunset), { day, normal: normal === undefined ? 10 + 0.65 * 14 : normal, imperialFirst: true }) };
 };
 
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2', '.tsv': 'text/plain', '.webmanifest': 'application/manifest+json' };
@@ -77,14 +85,19 @@ const server = http.createServer((req, res) => {
   const BASE = `http://localhost:${server.address().port}/`;
   const browser = await playwright.chromium.launch({ args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader'] });
   const problems = [];
-  const net = { forecast: 'ok', geocode: 'ok', tiles: 'ok', overpass: 'ok', calls: [] };
+  const net = { forecast: 'ok', geocode: 'ok', tiles: 'ok', overpass: 'ok', near: 'ok', photon: 'ok', calls: [] };
 
   async function open(opts) {
     const o = opts || {};
     const context = o.context || await browser.newContext({ viewport: o.viewport || { width: 390, height: 844 }, locale: 'en-US', timezoneId: 'America/Denver', serviceWorkers: 'block',
       permissions: ['clipboard-read', 'clipboard-write'].concat(o.geo ? ['geolocation'] : []), geolocation: o.geo || undefined, deviceScaleFactor: 1 });
     if (!o.context) {
-      await context.route(/open-meteo\.com|openfreemap\.org|overpass/, (route) => {
+      await context.addInitScript(() => {
+        window.__shares = [];
+        navigator.share = async (d) => { window.__shares.push({ title: d.title || '', text: d.text || '', url: d.url || '', files: (d.files || []).map((f) => `${f.name}|${f.type}|${f.size}`) }); };
+        navigator.canShare = (d) => !((d && d.files) || []).some((f) => f.type === 'text/calendar');
+      });
+      await context.route(/open-meteo\.com|openfreemap\.org|overpass|photon\.komoot/, async (route) => {
         const url = new URL(route.request().url());
         net.calls.push(url.href);
         const json = (body) => route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(body) });
@@ -96,7 +109,18 @@ const server = http.createServer((req, res) => {
         if (url.hostname === 'api.open-meteo.com') return net.forecast === 'ok' ? json(forecastBody(url)) : route.abort();
         if (url.hostname === 'air-quality-api.open-meteo.com') return net.forecast === 'ok' ? json(airBody()) : route.abort();
         if (url.hostname === 'archive-api.open-meteo.com') return json(archiveBody());
-        if (/overpass/.test(url.hostname)) return net.overpass === 'down' ? route.abort() : json({ elements: OSM });
+        if (/overpass/.test(url.hostname)) {
+          if (/around:300/.test(url.searchParams.get('data') || '')) return net.near === 'down' ? route.abort() : json({ elements: net.near === 'none' ? [] : NEAR });
+          if (net.overpass === 'down') return route.abort();
+          if (net.overpass === 'remark') return json({ elements: [], remark: 'runtime error: Query timed out in "query" at line 1 after 26 seconds.' });
+          if (net.overpass === 'empty') return json({ elements: [] });
+          if (net.overpass === 'slow') await new Promise((r) => setTimeout(r, 20000));
+          return json({ elements: OSM });
+        }
+        if (url.hostname === 'photon.komoot.io') {
+          if (net.photon !== 'ok') return route.abort();
+          return json({ features: /boat/i.test(url.searchParams.get('q')) ? [{ geometry: { coordinates: [-105.0431, 39.7473] }, properties: { name: 'The Boathouse', street: 'W Byron Pl', housenumber: '4700', city: 'Denver', state: 'Colorado', country: 'United States', osm_value: 'restaurant' } }] : [] });
+        }
         if (url.hostname === 'tiles.openfreemap.org') {
           if (net.tiles !== 'ok') return route.abort();
           return json({ version: 8, sources: {}, layers: [{ id: 'bg', type: 'background', paint: { 'background-color': '#2B4A4A' } }] });
@@ -121,7 +145,7 @@ const server = http.createServer((req, res) => {
     await page.waitForSelector('.result');
     const name = (await page.locator('.result .n').first().innerText()).trim();
     await page.click('.result');
-    await page.waitForFunction((n) => { const h = document.querySelector('.page[aria-current="true"] .hero h2'); return h && h.textContent.trim() === n && document.querySelector('.page[aria-current="true"] .hero .score, .page[aria-current="true"] .hero .none'); }, name);
+    await page.waitForFunction((n) => { const h = document.querySelector('.page[aria-current="true"] .hero h2'); return h && h.textContent.trim() === n && document.querySelector('.page[aria-current="true"] .hero .ans, .page[aria-current="true"] .hero .none'); }, name);
   }
   /** Checks that hold on every screen: nothing scrolls sideways, no text under 13px, buttons big enough. */
   async function layout(page, what) {
@@ -204,480 +228,560 @@ const server = http.createServer((req, res) => {
     check(worst.ratio >= worst.need, `${what}: text contrast at least ${worst.need}:1 over the brightest sky behind it (worst ${worst.ratio.toFixed(2)}:1, “${worst.text}”)`);
   }
 
-  // ---------- 1. First run ----------
+  const DAY = 86400000;
+  const GO = NOON + 3 * DAY;                              // Tuesday 23 June: a Go evening in the stand-in forecast
+  const fmt = (ms) => new Intl.DateTimeFormat('en-US', { timeZone: 'America/Denver', hour: 'numeric', minute: '2-digit' }).format(ms).replace(' AM', ' am').replace(' PM', ' pm').replace(/ /g, ' ');
+  const norm = (s) => s.replace(/[  ]/g, ' ').replace(/ (AM|PM)/g, (m) => m.toLowerCase());
+  const answerOf = (r, when) => (r.verdict === 'go' ? `Go ${when}` : r.verdict === 'maybe' ? `Maybe ${when}` : `Not ${when}`);
+  const shares = (page) => page.evaluate(() => window.__shares);
+  const waitPlaces = (page) => page.waitForFunction(() => { const g = window.__gh, d = g.DATA[g.S.current]; return d && d.spots && typeof d.spots === 'object' && d.near && typeof d.near === 'object'; }, null, { timeout: 15000 });
+  const reset = () => Object.assign(net, { forecast: 'ok', geocode: 'ok', tiles: 'ok', overpass: 'ok', near: 'ok', photon: 'ok' });
+
+  // ---------- 1. First run: the sample, and the answer in ten seconds ----------
   {
     const { page, context } = await open();
-    check((await text(page, CUR + '.hero h2')).includes('Sample'), 'first run: a sample city, labelled Sample');
-    check(await page.locator(CUR + '.hero .score .n').isVisible(), 'first run: the sample evening shows a score');
+    check((await text(page, CUR + '.hero h2')).includes('Sample'), 'first run: a sample town, labelled Sample');
+    check(/^(Go|Maybe|Not) tonight$/.test((await text(page, CUR + '.hero .ans')).trim()), 'first run: the top of the page is the answer in words');
+    check(/Sunset \d+:\d\d/.test(norm(await text(page, CUR + '.hero .atimes'))), 'first run: one time under it');
+    check(await page.locator(CUR + '.hero .score, ' + CUR + '.hero .stars').count() === 0, 'no score or stars on the first screen');
     check(net.calls.length === 0, 'first run: nothing is fetched until a place is chosen');
-    check(await page.locator('#bar .dot').count() === 1 && await page.locator('#bar [data-act="open-plans"]').isVisible() && await page.locator('#bar [data-act="open-list"]').isVisible(), 'the bottom bar: Plans, a dot for each place, and Places');
+    const tabs = (await page.locator('#bar .barbtn span').allInnerTexts()).map((t) => t.trim());
+    check(tabs.join('|') === 'Today|Plans|Places' && await page.locator('#bar .barbtn[aria-current="page"]').innerText() === 'Today', 'the bar: Today, Plans, Places, with the one you are on marked');
+    const fold = await page.evaluate(() => { const hero = document.querySelector('.page[aria-current="true"] .hero'), pick = document.querySelector('.page[aria-current="true"] .pick, .page[aria-current="true"] .ask'); return pick ? pick.getBoundingClientRect().top < window.innerHeight && hero.getBoundingClientRect().bottom <= window.innerHeight : false; });
+    check(fold, 'the answer, the time and what to do next are on the first screen without scrolling');
     await layout(page, 'first run (phone)'); await contrast(page, 'first run');
     await shot(page, 'phone-first-run');
     await page.click(CUR + '[data-act="add-place"]');
-    check(await page.locator('#q').isVisible() && await page.locator('[data-act="locate"]').isVisible(), 'first run: Add a place opens search and Use my location');
+    check(await page.locator('#q').isVisible() && await page.locator('[data-act="locate"]').isVisible(), 'first run: Add my place opens search and Use my location');
     check(await page.evaluate(() => document.activeElement && document.activeElement.id === 'q'), 'and puts the cursor in the search box');
-    await layout(page, 'places list (phone)'); await contrast(page, 'places list');
-    await shot(page, 'phone-places-first-run');
+    check(await page.locator('#bar').isVisible() && await page.locator('#bar .barbtn[aria-current="page"]').innerText() === 'Places', 'the bar stays, now on Places');
+    await layout(page, 'places tab (phone)'); await contrast(page, 'places tab');
+    await shot(page, 'phone-places-tab');
     await page.click('[data-act="locate"]');
     await page.waitForSelector('#toast:not([hidden])');
-    check((await text(page, '#toast')).includes('Search for a place instead'), 'location refused: “Search for a place instead”, and nothing else changes');
-    check(await page.locator('#q').isVisible(), 'location refused: search still works');
+    check(/turned off/.test(await text(page, '#toast')), 'location not allowed: says it is turned off, and to search or allow it');
+    await page.goBack();
+    await page.waitForSelector(CUR + '.hero');
+    check(await page.locator('#q').count() === 0 && await page.locator('#bar .barbtn[aria-current="page"]').innerText() === 'Today', 'the browser’s Back returns to Today');
     await context.close();
   }
 
-  // ---------- 2. A place, the rating, the times ----------
-  let state;   // a context with Denver saved, reused below
+  // ---------- 2. A "Not tonight": it says so, says why, and offers the next good evening ----------
+  let skipState;
   {
     const { page, context } = await open();
     await addPlace(page, 'Denv');
     await page.waitForFunction(() => window.__gh.S.places[0].normals);
-    await page.waitForTimeout(100);
+    await waitPlaces(page);
+    await page.waitForTimeout(150);
     const exp = expectedDenver(0), r = exp.rating;
+    check(r.verdict === 'skip', 'the stand-in forecast makes 20 June a skip');
     check(await page.locator('.page').count() === 1 && !(await text(page, CUR + '.hero h2')).includes('Sample'), 'adding a place replaces the sample');
-    check(await text(page, CUR + '.hero .score .n') === r.score.toFixed(1), `the score on screen is the core’s for the same forecast (${r.score.toFixed(1)})`);
-    check((await text(page, CUR + '.verdict')).startsWith(r.verdictWord) && await page.locator(CUR + '.verdict svg').count() === 1, 'the verdict has a word and an icon, not just a colour');
-    check((await text(page, CUR + '.hero .range')).includes(`likely ${r.lo.toFixed(1)} to ${r.hi.toFixed(1)}`), 'the range is shown, labelled typical');
-    check(await text(page, CUR + '.summary') === r.reason, 'the reason sentence opens the evening card');
-    check((await text(page, CUR + '.hero .colour')).replace(/\s+/g, ' ') === `${r.colourClass} colour · ${r.colour}`, `the colour class leads, after the stars (${r.colourClass}, ${r.colour})`);
-    const label = await page.locator(CUR + '.hero').getAttribute('aria-label');
-    check(label === `Tonight. ${r.score.toFixed(1)} out of 5 stars, likely ${r.lo.toFixed(1)} to ${r.hi.toFixed(1)}. ${r.colourClass} colour, ${r.colour} out of 100. ${r.verdictWord}${r.qualifier ? ', ' + r.qualifier : ''}. ${r.reason}`, 'screen readers get one sentence; the stars are hidden from them');
-    check(await page.locator(CUR + '.hero .stars').getAttribute('aria-hidden') === 'true', 'star glyphs are hidden from assistive technology');
-    const fill = await page.locator(CUR + '.hero .stars .fill').evaluate((el) => el.getBoundingClientRect().width / el.parentElement.getBoundingClientRect().width);
-    check(Math.abs(fill - r.score / 5) < 0.01, 'stars are filled in proportion to the score');
-    const strip = await text(page, CUR + '.times');
-    const fmt = (ms) => new Intl.DateTimeFormat('en-US', { timeZone: 'America/Denver', hour: 'numeric', minute: '2-digit' }).format(ms).replace(/ /g, ' ').toLowerCase();
-    check(['goldenStart', 'bestStart', 'sunset', 'afterglowEnd', 'lastLight'].every((k) => strip.includes(fmt(exp.times[k]))), 'the five times match the sun’s position to the minute');
-    check(await page.locator(CUR + '.dt').count() === 0 && await page.locator(CUR + '[data-act="details-toggle"]').getAttribute('aria-expanded') === 'false', 'the tiles behind the score start folded away');
-    await page.locator(CUR + '[data-act="details-toggle"]').click();
-    check(await page.locator(CUR + '[data-act="details-toggle"]').getAttribute('aria-expanded') === 'true' && await page.evaluate(() => localStorage.getItem('gh.details')) === 'true', 'one tap shows them, and the choice is remembered');
-    const tiles = (await page.locator(CUR + '.dt .eyebrow > span:first-of-type').allInnerTexts()).map((t) => t.trim());
-    check(['COLOUR', 'CLOUD COVER', 'TOWARD THE SUNSET', 'AIR CLARITY', 'VISIBILITY', 'WIND', 'FEELS LIKE', 'RAIN', 'HUMIDITY', 'MOON', 'AT SUNSET', 'MOONRISE', 'MOONSET', 'MOONLIGHT', 'DISTANCE'].every((n) => tiles.includes(n)) && tiles.length === 15, `every input to the score has its own tile (${tiles.length})`);
-    const tileText = (name) => page.locator(CUR + `.dt[aria-label="${name}"]`).innerText();
-    check((await tileText('Colour')).includes(r.colourClass) && (await tileText('Colour')).includes(`${r.colour} of 100`), 'the Colour tile shows the class and the score out of 100');
-    check(/High.*\d+%.*Mid.*\d+%.*Low.*\d+%/.test((await tileText('Cloud cover')).replace(/\n/g, ' ')), 'the Cloud cover tile shows high, mid and low cloud');
-    check(/\d+ mph\s+\d+ km\/h/.test(await tileText('Wind')) && /\d+°F\s+\d+°C/.test(await tileText('Feels like')), 'tiles show their readings in both units');
-    const gfx = await page.locator(CUR + '.dt').evaluateAll((els) => els.filter((e) => !e.querySelector('.gfx svg, .gfx .sbar, .gfx .clbars, .gfx .pathg')).map((e) => e.getAttribute('aria-label')));
-    check(gfx.length === 0, `every tile has a graphic${gfx.length ? ': missing on ' + gfx.join(', ') : ''}`);
-    check(await page.locator(CUR + '.dt.wide').count() === 5 && await page.locator(CUR + '.dt[aria-label="Wind"] svg.compass').count() === 1, 'the colour tiles and the two big moon tiles run the full width; Wind has its compass');
-    const moonExp = G.moonEvening(exp.times.sunset, DENVER.latitude, DENVER.longitude, exp.times.lastLight);
-    const moonText = (await tileText('Moon')).replace(/\s+/g, ' ');
-    check(moonText.includes(moonExp.name) && moonText.includes(`${Math.round(moonExp.fraction * 100)}% lit`) && await page.locator(CUR + '.dt[aria-label="Moon"] .phases span').count() === 8, 'the Moon tile shows the phase, how much is lit, and the month as eight moons');
-    const fmt2 = (ms) => new Intl.DateTimeFormat('en-US', { timeZone: 'America/Denver', hour: 'numeric', minute: '2-digit' }).format(ms).replace(/\u202f/g, ' ').toLowerCase();
-    check(!moonExp.rise || (await tileText('Moonrise')).includes(fmt2(moonExp.rise.time)), 'Moonrise shows the time the core works out');
-    check(!moonExp.set || (await tileText('Moonset')).includes(fmt2(moonExp.set.time)), 'Moonset shows the time the core works out');
-    check(await page.locator(CUR + '.dt[aria-label="At sunset"] svg.horizon text').count() === 5, 'At sunset draws the whole horizon, north to north, with the sun and the moon');
-    check(/Usual: \d+°F/.test(await tileText('Feels like')), 'Feels like compares with the usual evening temperature here');
-    const dot = await page.locator(CUR + '.dt[aria-label="Colour"] .sbar u').evaluate((el) => parseFloat(el.style.left) / 100);
-    check(Math.abs(dot - r.colour / 100) < 0.011, 'the dot on the Colour scale sits at the score');
-    const grid = await page.locator(CUR + '.dt').evaluateAll((els) => new Set(els.map((e) => Math.round(e.getBoundingClientRect().left))).size);
-    check(grid === 2, 'tiles are two across on a phone');
-    await page.locator(CUR + '.details').scrollIntoViewIfNeeded();
-    await shot(page, 'phone-tiles');
-    await page.locator(CUR).evaluate((el) => el.scrollTo(0, 0));
-    await shot(page, 'phone-tonight');
-    await layout(page, 'tonight (phone)'); await contrast(page, 'tonight');
-    await page.click('#bar [data-act="open-list"]');
-    await page.click('.seg [data-v="metric"]');
-    await page.click('[data-act="close-view"]');
-    check(/\d+ km\/h\s+\d+ mph/.test(await page.locator(CUR + '.dt[aria-label="Wind"]').innerText()), 'the units switch, in Places, changes which is listed first');
-    check(await page.evaluate(() => JSON.parse(localStorage.getItem('gh.imperialFirst'))) === false, 'and is remembered');
-    await page.click('#bar [data-act="open-list"]'); await page.click('.seg [data-v="imperial"]'); await page.click('[data-act="close-view"]');
-    const p0 = net.calls.find((u) => u.includes('//api.open-meteo.com') && !/latitude=[^&]*(,|%2C)/.test(u));
-    check(!!p0 && /forecast_days=8/.test(p0) && /past_days=1/.test(p0) && /timeformat=unixtime/.test(p0) && /timezone=GMT/.test(p0) && /wind_speed_unit=ms/.test(p0), 'the forecast request asks for 8 days, 1 past day, GMT, unix time and metres per second');
-    const up = net.calls.find((u) => u.includes('//api.open-meteo.com') && /latitude=[^&]*(,|%2C)/.test(u));
-    check(!!up && decodeURIComponent(up).match(/latitude=([^&]*)/)[1].split(',').length === 4 && /cloud_cover_high/.test(up), 'one request covers the four points toward the sunset, with high cloud');
+    check((await text(page, CUR + '.hero .ans')).trim() === 'Not tonight', 'a skip evening reads “Not tonight”');
+    const next = [1, 2, 3, 4, 5].map((d) => expectedDenver(d)).find((e) => e.rating.verdict === 'go');
+    const nextName = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Denver', weekday: 'long' }).format(next.times.sunset);
+    const reason = (await text(page, CUR + '.hero .reason')).trim();
+    check(reason.startsWith(r.reason) && reason.endsWith(`Try ${nextName}.`), `with the reason and the next good evening (“${reason}”)`);
+    check(norm(await text(page, CUR + '.hero .atimes')) === `Sunset ${fmt(exp.times.sunset)}`, 'a Not tonight shows the sunset time and no “be there by”');
+    check(await page.locator(CUR + '.pick [data-act="plan-new"]').innerText() === `Plan ${nextName}` && !/this evening/.test(await text(page, CUR + '.pick')), `the button plans ${nextName}, not this evening`);
+    check(await page.locator(CUR + '.pick .srow[data-act="spot-open"]').count() === 0 && await page.locator(CUR + '.moreplaces .srow').count() === 0, 'no place is pushed on a Not tonight');
+    check(/^Updated \d+:\d\d (am|pm) · Refresh$/.test(norm(await text(page, CUR + '.hero .upd')).trim()), 'when the forecast was updated, with Refresh');
+    check(await page.locator('.page[aria-current="true"] .small').filter({ hasText: 'Add another place to swipe between them' }).count() === 1, 'with one location, a line says how to get more to swipe between');
+    await layout(page, 'not tonight (phone)'); await contrast(page, 'not tonight');
+    await shot(page, 'phone-not-tonight');
+    // The day's sheet for the next good evening.
+    await page.click(CUR + '.pick .dayline');
+    await page.waitForSelector('#sheet .ans');
+    check((await text(page, '#sheet .ans')).trim() === `Go ${nextName}` && (await text(page, '#sheetTitle')).startsWith(nextName), 'the next good evening opens as a sheet over the page');
+    check((await text(page, CUR + '.hero .ans')).trim() === 'Not tonight', 'and the page underneath has not moved');
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('#sheetback', { state: 'hidden' });
+    skipState = await context.storageState({ indexedDB: true });
+    await context.close();
+  }
+
+  // ---------- 3. A Go evening: one answer, one time, one place, and why ----------
+  let state;   // a context with Denver saved, on a Go evening
+  {
+    const { page, context } = await open({ time: GO });
+    await addPlace(page, 'Denv');
+    await page.waitForFunction(() => window.__gh.S.places[0].normals);
+    await waitPlaces(page);
+    await page.waitForTimeout(150);
+    const exp = expectedDenver(0, 3), r = exp.rating;
+    check(r.verdict === 'go', 'the stand-in forecast makes 23 June a Go');
+    check((await text(page, CUR + '.hero .ans')).trim() === 'Go tonight' && (await text(page, CUR + '.hero .reason')).trim() === r.reason, 'the answer and its reason are the core’s for the same forecast');
+    check(norm(await text(page, CUR + '.hero .atimes')) === `Sunset ${fmt(exp.times.sunset)} · be there by ${fmt(exp.times.bestStart - 20 * MIN)}`, 'one time: sunset, and be there by 20 minutes before the best light');
+    check(/Outlook|Forecast|typical|°/.test(await text(page, CUR + '.hero')) === false, 'no “Outlook”, “Forecast”, “(typical)” or compass degrees on the answer');
+    check((await text(page, CUR + '.pick .srow .n')).trim() === 'Inspiration Point' && (await text(page, CUR + '.pick [data-act="plan-new"]')).trim() === 'Plan this evening', 'one place: the top easy-to-reach one, with Plan this evening');
+    check(await page.locator(CUR + '.dt').count() === 0 && await page.locator(CUR + '[data-act="details-toggle"]').getAttribute('aria-expanded') === 'false', 'the score and the tiles are one tap down, under Why');
+    const noSide = await page.evaluate(() => Array.from(document.querySelectorAll('.page[aria-current="true"] *')).filter((e) => e.scrollWidth > e.clientWidth + 1 && /auto|scroll/.test(getComputedStyle(e).overflowX)).length);
+    check(noSide === 0, 'nothing on the page scrolls sideways, so a swipe anywhere moves between locations');
+    await layout(page, 'go evening (phone)'); await contrast(page, 'go evening');
+    await shot(page, 'phone-today');
+    await page.click(CUR + '[data-act="details-toggle"]');
+    check((await text(page, CUR + '.scorecard .big')).trim() === r.score.toFixed(1) && (await text(page, CUR + '.scorecard')).includes(`${r.colourClass} colour · ${r.colour} of 100`), `Why shows the score (${r.score.toFixed(1)}) and the colour class`);
+    const strip = norm(await text(page, CUR + '.times'));
+    check(['goldenStart', 'bestStart', 'sunset', 'afterglowEnd', 'lastLight'].every((k) => strip.includes(fmt(exp.times[k]))), 'and the five times, to the minute');
+    check(await page.locator(CUR + '.dt').count() === 15 && await page.evaluate(() => localStorage.getItem('gh.details')) === 'true', 'and every tile; the choice is remembered');
+    check(/flat horizon/.test(await text(page, CUR + '.daily, ' + CUR + '.card:has(.evpath)')), 'a note says times assume a flat horizon');
+    await shot(page, 'phone-why');
+    await page.click(CUR + '[data-act="details-toggle"]');
+    // The week
+    const rows = page.locator(CUR + 'button.day');
+    check(await rows.count() === 4, 'the week: an evening a line, for the days the stand-in forecast covers');
+    await page.locator(CUR + '.daily').scrollIntoViewIfNeeded();
+    await shot(page, 'phone-week');
+    await rows.nth(1).click();
+    await page.waitForSelector('#sheet .sh-head');
+    const e1 = expectedDenver(1, 3);
+    check((await text(page, '#sheet .ans')).trim() === answerOf(e1.rating, 'tomorrow') && await page.locator('#sheet .dt').count() === 15 && await page.locator('#sheet .light').count() === 1, 'tapping an evening opens its sheet: the answer, the light, the score and every tile');
+    const light = norm(await text(page, '#sheet .light'));
+    check(light.includes(`Golden hour ${fmt(e1.times.goldenStart)} to ${fmt(e1.times.afterglowEnd)}`) && light.includes(`Blue hour ${fmt(e1.times.afterglowEnd)} to ${fmt(e1.times.lastLight)}`) && /sets to the north-west/.test(light), 'golden hour, blue hour and where the sun sets');
+    check(light.includes(`Decide by ${fmt(e1.times.bestStart - 20 * MIN - 3 * HOUR)}`) && /Wind \d+ mph/.test(light), 'a decide-by time three hours before, with the wind');
+    await layout(page, 'day sheet (phone)');
+    await shot(page, 'phone-day-sheet');
+    await page.click('#sheet [data-act="sheet-step"][data-d="1"]');
+    check((await text(page, '#sheet .ans')).trim().split(' ')[0] === answerOf(expectedDenver(2, 3).rating, 'x').split(' ')[0], 'the arrows step to the next evening');
+    await page.goBack();
+    await page.waitForSelector('#sheetback', { state: 'hidden' });
+    check((await text(page, CUR + '.hero .ans')).trim() === 'Go tonight', 'Back closes the sheet, and Today is as it was');
+    // Any date, months ahead
+    await page.fill(CUR + '#anyDate', '2027-06-12');
+    await page.locator(CUR + '#anyDate').dispatchEvent('change');
+    await page.waitForSelector('#sheet .sh-head');
+    const far = G.eveningTimes(G.solarNoonGuess(2027, 6, 12, DENVER.longitude), DENVER.latitude, DENVER.longitude);
+    check((await text(page, '#sheetTitle')).trim() === 'Saturday, Jun 12' && norm(await text(page, '#sheet .ans')).trim() === `Sunset ${fmt(far.sunset)}`, 'any date, a year ahead: the exact sunset time');
+    check(/Times are exact\. Colour can’t be forecast yet\./.test(await text(page, '#sheet')) && await page.locator('#sheet .dt, #sheet .scorecard').count() === 0 && await page.locator('#sheet [data-act="plan-new"]').isVisible(), 'with “Times are exact. Colour can’t be forecast yet.”, no rating, and a way to plan it');
+    await shot(page, 'phone-any-date');
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('#sheetback', { state: 'hidden' });
     state = await context.storageState({ indexedDB: true });
     await context.close();
   }
-  const withDenver = async (o) => {
-    const context = await browser.newContext({ viewport: (o && o.viewport) || { width: 390, height: 844 }, locale: 'en-US', timezoneId: 'America/Denver', serviceWorkers: 'block', storageState: state,
-      permissions: ['clipboard-read', 'clipboard-write'], deviceScaleFactor: 1, acceptDownloads: true });
-    const seed = await open({ viewport: { width: 390, height: 844 } });   // only to borrow the route handler
-    await seed.context.close();
-    await context.route(/open-meteo\.com|openfreemap\.org|overpass/, async (route) => {
-      const url = new URL(route.request().url());
-      net.calls.push(url.href);
-      const json = (body) => route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(body) });
-      if (url.hostname === 'geocoding-api.open-meteo.com') { const q = url.searchParams.get('name').toLowerCase(); return net.geocode === 'ok' ? json({ results: [DENVER, BOULDER, TROMSO].filter((c) => c.name.toLowerCase().startsWith(q) || (q.startsWith('trom') && c === TROMSO)) }) : route.abort(); }
-      if (url.hostname === 'api.open-meteo.com') return net.forecast === 'ok' ? json(forecastBody(url)) : route.abort();
-      if (url.hostname === 'air-quality-api.open-meteo.com') return net.forecast === 'ok' ? json(airBody()) : route.abort();
-      if (url.hostname === 'archive-api.open-meteo.com') return json(archiveBody());
-      if (/overpass/.test(url.hostname)) return net.overpass === 'down' ? route.abort() : json({ elements: OSM });
-      if (url.hostname === 'tiles.openfreemap.org') return net.tiles === 'ok' ? json({ version: 8, sources: {}, layers: [{ id: 'bg', type: 'background', paint: { 'background-color': '#2B4A4A' } }] }) : route.abort();
-      return route.abort();
-    });
-    return open({ context, time: o && o.time, hash: o && o.hash });
-  };
 
-  // ---------- 3. The ten evenings, swiping between places, and Compare ----------
+  // ---------- 4. The plan: one tap, kept from the first tap, shared in one more ----------
+  let sharedUrl = null, organiserVerdict = null;
   {
-    const { page, context } = await withDenver();
-    await page.waitForSelector(CUR + '.hero .score');
-    const rows = page.locator(CUR + '.day');
-    check(await rows.count() === 7, 'each place’s page lists the six rated evenings and one line for the rest');
-    check(await page.locator(CUR + 'button.day').count() === 6, 'six are rated');
-    check(/outlook/.test(await rows.nth(4).getAttribute('class')) && /^\d\.[05]$/.test(await rows.nth(4).locator('.sc').innerText()) && !/outlook/.test(await rows.nth(1).getAttribute('class')), 'outlook rows are dimmed and rounded to half a star');
-    const bars = await page.locator(CUR + 'button.day .cbar i').evaluateAll((els) => els.map((e) => Math.round(parseFloat(e.style.width))));
-    check(bars.length === 6 && bars.every((w, i) => w === Math.max(3, expectedDenver(i).rating.colour)), 'each rated evening has a bar for its colour score, on one scale');
-    check(await page.locator(CUR + 'button.day').evaluateAll((els) => els.every((e) => e.getBoundingClientRect().height <= 64)), 'one line an evening');
-    check(/^Friday, Jun 26 and beyond: too early to call$/.test((await rows.nth(6).innerText()).trim()), 'one line: “Friday, Jun 26 and beyond: too early to call”');
-    const marks = await page.locator(CUR + 'button.day').evaluateAll((els) => els.map((e) => (e.querySelector('.best') || {}).textContent || ''));
-    check(marks.every((m, i) => { const r = expectedDenver(i).rating; return m === (r.verdict !== 'go' ? '' : r.score >= 4.5 ? 'Great' : 'Good'); }), `each Go evening is marked Good, or Great from 4.5 (${marks.join('|')})`);
-    {
-      const heroWas = await page.locator(CUR + '.hero .score .n').first().innerText();
-      const want = async (i) => (await page.locator(CUR + 'button.day').nth(i).locator('.sc').innerText()).trim();
-      const w2 = await want(2), w3 = await want(3);
-      await page.locator(CUR + 'button.day').nth(2).click();
-      const sheet = page.locator('#sheet');
-      const got = (await sheet.locator('.score .n').innerText()).trim();
-      check(await sheet.isVisible() && parseFloat(got) === parseFloat(w2) && (await page.locator(CUR + '.hero .score .n').first().innerText()) === heroWas, `tapping an evening opens its detail in a sheet; the location’s page stays as it was (${got} / ${w2})`);
-      check(await sheet.locator('.evpath').count() === 1 && await sheet.locator('.dt').count() === 15, 'the sheet has that evening’s times and every tile');
-      await sheet.locator('[data-act="sheet-step"][data-d="1"]').click();
-      check(parseFloat(await page.locator('#sheet .score .n').innerText()) === parseFloat(w3), 'the arrows step to the next evening');
-      await page.keyboard.press('Escape');
-      check(!(await page.locator('#sheetback').isVisible()), 'Escape or Done closes it');
-    }
-    await page.locator(CUR + '.daily').scrollIntoViewIfNeeded();
-    await shot(page, 'phone-week');
-    await layout(page, 'place page (phone)'); await contrast(page, 'place page');
-    await rows.nth(1).click();
-    await page.waitForFunction(() => /TOMORROW/i.test(document.querySelector('#sheet .hero .when').textContent));
-    check(await page.locator('#sheet [data-act="plan-new"]').isVisible(), 'an evening’s sheet has Plan this evening');
-    await page.locator('#sheet [data-act="sheet-close"]').click();
-    check(!(await page.locator('#sheetback').isVisible()) && /TONIGHT/i.test(await text(page, CUR + '.hero .when')), 'Done closes it, back on tonight');
+    const { page, context } = await open({ time: GO });
+    await addPlace(page, 'Denv');
+    await waitPlaces(page);
+    await page.waitForTimeout(150);
+    const exp = expectedDenver(0, 3, null);
+    const spot = OSM[0];
+    const spotTimes = G.eveningTimes(G.solarNoonGuess(2026, 6, 23, spot.lon), spot.lat, spot.lon);
+    await page.click(CUR + '.pick [data-act="plan-new"]');                                       // tap 1
+    await page.waitForSelector('#spotName');
+    check(await page.inputValue('#spotName') === 'Inspiration Point' && (await text(page, '.planhero h2')).trim() === 'Inspiration Point', 'Plan this evening opens a plan with the place filled in');
+    check(await page.evaluate(() => window.__gh.S.plans.length) === 1, 'and the plan is saved at once, with no Save button');
+    check(await page.locator('[data-act="plan-save"]').count() === 0 && await page.locator('[data-act="share-go"]').isVisible(), 'Share is there straight away');
+    check(await page.locator('#bar').isVisible() && await page.locator('#bar .barbtn[aria-current="page"]').innerText() === 'Plans', 'the bar is still there, on Plans');
+    const tl = norm(await text(page, '.timeline'));
+    const meet = spotTimes.bestStart - 20 * MIN, startBack = spotTimes.lastLight - 5 * MIN;
+    check(tl.includes(`${fmt(meet)}`) && tl.includes('Be there by') && tl.includes(`${fmt(spotTimes.sunset)}`), 'the times are for the venue itself');
+    check(tl.includes(`${fmt(startBack)}`) && tl.includes('Start back by') && tl.includes(`before dark at ${fmt(spotTimes.lastLight)}`), `Start back by is last light minus the 5-minute walk (${fmt(startBack)})`);
+    const home = norm(await text(page, '.home'));
+    check(home.includes(`Start back by about ${fmt(startBack)} to reach your car before dark.`) && /Lighting not listed/.test(home) && /never say a place is lit or safe/.test(home), 'Getting home: when to start back, and “Lighting not listed”');
+    const sms = await page.locator('.home a.btn').evaluateAll((els) => els.map((e) => [e.textContent.trim(), decodeURIComponent(e.getAttribute('href'))]));
+    check(sms.length === 2 && sms[0][0] === 'Text a friend where I’ll be' && /^sms:/.test(sms[0][1]) && sms[0][1].includes('Inspiration Point') && norm(sms[0][1]).includes(`starting back by ${fmt(startBack)}`) && sms[0][1].includes('I’ll message when I’m home'), '“Text a friend where I’ll be” opens a message with the place, the times and “I’ll message when I’m home”');
+    check(sms[1][0] === 'I’m home' && /Home safe/.test(sms[1][1]), 'and “I’m home” opens the second message');
+    organiserVerdict = await page.locator('.planans').first().getAttribute('class');
+    await layout(page, 'plan (phone)'); await contrast(page, 'plan');
+    await shot(page, 'phone-plan');
+    // Share in one tap (tap 2): the picture, the words and the link.
+    await page.waitForFunction(() => true); await page.waitForTimeout(900);
+    await page.click('[data-act="share-go"]');                                                    // tap 2
+    await page.waitForFunction(() => window.__shares.length === 1);
+    const sh = (await shares(page))[0];
+    sharedUrl = (sh.text.match(/https?:\/\/\S+#p=\S+/) || [sh.url])[0];
+    check(/\.png\|image\/png\|\d{4,}/.test(sh.files[0] || '') && /#p=/.test(sharedUrl) && norm(sh.text).includes(`Be there by ${fmt(meet)}`), 'one tap on Share opens the share sheet with a picture, the times and the link: a sent plan in two taps from Today');
+    const decoded = G.decodePlan(sharedUrl.split('#p=')[1]);
+    check(decoded && decoded.spot.name === 'Inspiration Point' && decoded.times.meetAt === Math.round(meet / MIN) * MIN && decoded.walkIn === 5, 'the link carries the place, the times and the walk in');
+    check(!/39\.739|-104\.99|start|leaveBy/.test(JSON.stringify(decoded)), 'and never where you are leaving from');
+    await page.waitForSelector('[data-act="share-go"]:has-text("Share again")');
+    // Change the plan: an arrive-by of my own, then Send update.
+    const earlier = new Intl.DateTimeFormat('en-GB', { timeZone: 'America/Denver', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(meet - 30 * MIN);
+    const leaveBefore = norm(await text(page, '.timeline .tl:first-child .t'));
+    await page.fill('#arriveBy', earlier); await page.locator('#arriveBy').dispatchEvent('change');
+    await page.waitForSelector('[data-act="share-update"]');
+    const tl2 = norm(await text(page, '.timeline'));
+    check(tl2.includes(fmt(meet - 30 * MIN)) && tl2.includes('The time you set') && norm(await text(page, '.timeline .tl:first-child .t')) !== leaveBefore, 'an arrive-by you set moves Be there by and Leave by');
+    await page.fill('#planNote', 'Park in car park B'); await page.locator('#planNote').dispatchEvent('change');
+    await page.waitForTimeout(900);
+    await page.click('[data-act="share-update"]');
+    await page.waitForFunction(() => window.__shares.length === 2);
+    const up = (await shares(page))[1], upPlan = G.decodePlan(((up.text.match(/#p=(\S+)/) || [])[1]) || up.url.split('#p=')[1]);
+    check(norm(up.text).startsWith(`Changed: now ${fmt(meet - 30 * MIN)}.`) && upPlan.changed === norm(`now ${fmt(meet - 30 * MIN)}`).replace(/ (am|pm)/, (m) => m) && upPlan.note === 'Park in car park B', 'Send update re-sends it with “Changed: now …” on top, and the note');
+    check(await page.locator('[data-act="share-update"]').count() === 0, 'once sent, there is nothing left to update');
+    // Travel time and home-by.
+    await page.fill('#travelMin', '45'); await page.locator('#travelMin').dispatchEvent('change');
+    check(/about 45 min/.test(await text(page, '.timeline .tl:first-child')), 'a travel time you set is used for Leave by');
+    await page.fill('#homeBy', '19:00'); await page.locator('#homeBy').dispatchEvent('change');
+    check(/To be home by 7:00 pm, start back by/.test(norm(await text(page, '.home'))) && /minutes before the sun sets/.test(await text(page, '.home')), 'a home-by time that doesn’t fit says when you would have to start back');
+    await page.fill('#homeBy', '23:00'); await page.locator('#homeBy').dispatchEvent('change');
+    check(/Home by 11:00 pm fits/.test(norm(await text(page, '.home'))), 'and one that fits says so');
+    check(/href="[^"]*maps[^"]*"[^>]*>Check in Maps/.test(await page.locator('.col').first().innerHTML()), 'travel is marked an estimate, with Check in Maps');
+    // Calendar: a file with a 30-minute reminder and the start-back time.
+    const [download] = await Promise.all([page.waitForEvent('download'), page.click('[data-act="calendar"]')]);
+    const ics = fs.readFileSync(await download.path(), 'utf8').replace(/\r\n /g, '');
+    check(/TRIGGER:-PT30M/.test(ics) && /Start back by/.test(ics) && /SUMMARY:Sunset at Inspiration Point/.test(ics), 'Add to calendar: an event with a reminder 30 minutes before, and when to start back');
+    // Back, and the plan is in Plans.
+    await page.click('[data-act="close-view"]');
+    await page.waitForSelector(CUR + '.hero');
+    await page.click('#bar [data-act="open-plans"]');
+    await page.waitForSelector('.plan-row');
+    check(await page.locator('.plan-row').count() === 1 && (await text(page, '.plan-row .n')).trim() === 'Inspiration Point', 'going back never loses the plan: it is in Plans');
+    check(await page.locator('.plan-row .v').count() === 1 && await page.locator('[data-act="plan-new"]').isVisible(), 'Plans shows today’s answer beside each plan, and has a New plan button');
+    await layout(page, 'plans (phone)');
+    await shot(page, 'phone-plans');
+    // "Has it changed?"
+    await page.evaluate(() => { const g = window.__gh; g.S.plans[0].scoreAtSave = 1.2; g.db.put('plans', g.S.plans[0]); g.render(); });
+    check(/Was 1\.2 when you made this plan, now \d\.\d\./.test(await text(page, '.plan-row .chg')), 'a plan whose evening has changed says “Was 1.2 when you made this plan, now …”');
+    await page.click('.plan-row');
+    await page.waitForSelector('#spotName');
+    check(/Was 1\.2 when you made this plan/.test(await text(page, '.chg')), 'and says so on the plan');
+    // A new plan somewhere else: a name typed, then Back, is kept; an untouched one is not.
+    await page.click('[data-act="close-view"]');
+    await page.waitForSelector('.plan-row');
+    await page.click('[data-act="plan-new"]');
+    await page.waitForSelector('#sheet [data-act="plan-blank"]');
+    check(await page.locator('#sheet .srow[data-act="plan-here"]').count() >= 5, 'New plan asks where, from your spots and the top places');
+    await page.click('#sheet [data-act="plan-blank"]');
+    await page.waitForSelector('#spotName');
+    await page.click('[data-act="close-view"]');
+    await page.waitForSelector('.plan-row');
+    check(await page.locator('.plan-row').count() === 1, 'a new plan left untouched is not kept');
+    await page.click('[data-act="plan-new"]');
+    await page.click('#sheet [data-act="plan-blank"]');
+    await page.waitForSelector('#spotName');
+    await page.fill('#spotName', 'Grandma’s porch');
+    await page.click('[data-act="close-view"]');
+    await page.waitForFunction(() => document.querySelectorAll('.plan-row').length === 2);
+    check((await page.locator('.plan-row .n').allInnerTexts()).map((t) => t.trim()).includes('Grandma’s porch'), 'open a plan, type a name, go back: it is in Plans with the name');
+    // Venue search, and any date.
+    await page.locator('.plan-row', { hasText: 'Grandma’s porch' }).click();
+    await page.waitForSelector('#venueQ');
+    await page.fill('#venueQ', 'The Boathouse');
+    await page.waitForSelector('#venueResults .result');
+    await page.click('#venueResults .result');
+    await page.waitForFunction(() => document.querySelector('#coords') && document.querySelector('#coords').value.startsWith('39.7473'));
+    check(await page.inputValue('#spotName') === 'The Boathouse' && await page.inputValue('#spotType') === 'venue' && await page.locator('[data-act="share-go"]').isVisible(), 'find a venue by name: it pins the venue, names the plan and makes it shareable');
+    await page.fill('#planDate', '2027-06-12'); await page.locator('#planDate').dispatchEvent('change');
+    await page.waitForFunction(() => /Colour can’t be forecast yet/.test(document.querySelector('.screen').textContent));
+    const farT = G.eveningTimes(G.solarNoonGuess(2027, 6, 12, -105.0431), 39.7473, -105.0431);
+    check(norm(await text(page, '.timeline')).includes(fmt(farT.sunset)) && norm(await text(page, '.light')).includes(`Golden hour ${fmt(farT.goldenStart)}`), 'a plan for a date a year ahead has exact times, golden hour and “Colour can’t be forecast yet”');
+    await shot(page, 'phone-plan-far');
+    net.photon = 'down';
+    await page.fill('#venueQ', 'Nowhere at all');
+    await page.waitForFunction(() => /Couldn’t search just now/.test(document.querySelector('#venueResults').textContent));
+    check(true, 'venue search down: says so, and that the map or coordinates still work');
+    reset();
+    await context.close();
+  }
 
-    // A second place: its own page, swiped to.
+  // ---------- 5. The shared plan: the same answer for whoever opens it ----------
+  {
+    const { page, context } = await open({ time: GO, hash: '#' + sharedUrl.split('#')[1] });
+    await page.waitForSelector('.timeline');
+    await page.waitForFunction(() => document.querySelector('.planans'), null, { timeout: 15000 });
+    const cls = await page.locator('.planans').first().getAttribute('class');
+    check(cls === organiserVerdict, `organiser and guest see the same answer for the same plan (${cls})`);
+    const spot = OSM[0], st = G.eveningTimes(G.solarNoonGuess(2026, 6, 23, spot.lon), spot.lat, spot.lon);
+    check(norm(await text(page, '.timeline')).includes(fmt(st.lastLight - 5 * MIN)) && /Start back by/.test(await text(page, '.timeline')), 'the guest sees when to start back too');
+    check(await page.locator('.home a.btn').count() === 2 && await page.locator('#howWasIt').count() === 0 && await page.locator('#bar').isHidden(), 'with Getting home, and never “How was it?”');
+    await layout(page, 'shared plan (phone)');
+    await shot(page, 'phone-shared');
+    await context.close();
+  }
+
+  // ---------- 6. Places: one place sheet, all places, filters ----------
+  {
+    const { page, context } = await open({ time: GO });
+    await addPlace(page, 'Denv');
+    await waitPlaces(page);
+    await page.waitForTimeout(150);
+    await page.click(CUR + '.pick .srow');
+    await page.waitForSelector('#sheet .spothero');
+    const know = await text(page, '#sheet');
+    check(/Parking and toilets nearby\./.test(know) && /Lighting not listed/.test(know) && /Photos and reviews on Google Maps/.test(know), 'a place opens as a sheet: parking and toilets when the map lists them, “Lighting not listed”, and Google Maps for photos');
+    check(await page.locator('#bar').count() === 1 && (await text(page, CUR + '.hero .ans')).trim() === 'Go tonight', 'over the page, which stays where it was');
+    await layout(page, 'place sheet (phone)');
+    await shot(page, 'phone-place');
+    await page.click('#sheet [data-act="spot-plan"]');
+    await page.waitForSelector('#spotName');
+    check(await page.inputValue('#spotName') === 'Inspiration Point', '“Plan this evening here” starts the plan there');
+    await page.goBack();
+    await page.waitForSelector(CUR + '.hero');
+    check(await page.locator('#sheetback').isHidden(), 'Back from that plan returns to Today');
+    await page.click(CUR + '[data-act="spots-all"]');
+    await page.waitForSelector('.chips');
+    check(await page.locator('.spotcard.a-easy .srow').count() >= 3 && /not checked/.test(await text(page, '.spotcard.a-dining .catsub')), 'all places, with dining marked “From open map data, not checked”');
+    await layout(page, 'all places (phone)'); await contrast(page, 'all places');
+    await shot(page, 'phone-places');
+    await page.click('.chip[data-k="parking"]'); await page.click('.chip[data-k="toilets"]');
+    const fit = (await page.locator('.spotgrid .srow .n').allInnerTexts()).map((t) => t.trim());
+    check(fit.length === 1 && fit[0] === 'Inspiration Point' && /Parking and toilets nearby/.test(await text(page, '.spotgrid .srow')), 'Parking and Toilets on: only the place the map confirms, in two taps');
+    await page.click('.chip[data-k="toilets"]');
+    const park = (await page.locator('.spotgrid .srow .n').allInnerTexts()).map((t) => t.trim());
+    check(park.length === 2 && park.includes('Sunset Park') && !park.includes('Linger'), 'Parking alone adds the park with parking; private parking does not count');
+    await page.click('.chip[data-k="parking"]'); await page.click('.chip[data-k="walk"]');
+    const walk = (await page.locator('.spotgrid .srow .n').allInnerTexts()).map((t) => t.trim());
+    check(walk.includes('Inspiration Point') && !walk.includes('Mount Evans'), 'Short walk leaves out the high-effort places');
+    await page.click('.chip[data-k="walk"]');
+    await page.locator('.spotcard.a-dining .srow', { hasText: 'Linger' }).click();
+    await page.waitForSelector('#sheet .spothero');
+    const btns = (await page.locator('#sheet a.btn').allInnerTexts()).map((t) => t.trim());
+    check(btns.includes('Call') && !btns.some((b) => /book/i.test(b)) && /Opening hours not listed/.test(await text(page, '#sheet')), 'dining: the phone button says Call, and missing hours are said');
+    await page.keyboard.press('Escape');
+    await context.close();
+  }
+  {
+    // Nothing listed nearby: the filter says so and still shows the nearest places.
+    net.near = 'none';
+    const { page, context } = await open({ time: GO });
+    await addPlace(page, 'Denv');
+    await waitPlaces(page);
+    await page.click(CUR + '[data-act="spots-all"]');
+    await page.click('.chip[data-k="parking"]'); await page.click('.chip[data-k="toilets"]');
+    check(/None listed with parking and toilets here\./.test(await text(page, '.pstate')) && await page.locator('.spotgrid .srow').count() >= 5 && /Parking and toilets not listed\./.test(await text(page, '.spotgrid .srow')), 'no place with parking and toilets: “None listed with parking and toilets here”, then the nearest places marked “not listed”');
+    await shot(page, 'phone-places-none');
+    reset();
+    await context.close();
+  }
+
+  // ---------- 7. When things fail: each state says so, and Try again works ----------
+  {
+    // The forecast is down from the start: the sunset time and the places still show.
+    net.forecast = 'down';
+    const { page, context } = await open({ time: GO });
+    await page.click('#bar [data-act="open-list"]');
+    await page.fill('#q', 'Denv'); await page.waitForSelector('.result'); await page.click('.result');
+    await page.waitForFunction(() => /Couldn’t reach the forecast/.test((document.querySelector('.page[aria-current="true"] .hero') || {}).textContent || ''), null, { timeout: 20000 });
+    const t0 = expectedDenver(0, 3).times;
+    check(norm(await text(page, CUR + '.hero .atimes')).includes(`Sunset ${fmt(t0.sunset)}`) && await page.locator(CUR + '.hero [data-act="retry"]').isVisible(), 'forecast down: says so, still gives the sunset time, and offers Try again');
+    await page.waitForSelector(CUR + '.moreplaces .srow', { timeout: 15000 });
+    check((await page.locator(CUR + '.moreplaces .srow .n').allInnerTexts()).map((t) => t.trim()).includes('Inspiration Point'), 'forecast down: the places still load');
+    await shot(page, 'phone-forecast-down');
+    net.forecast = 'ok';
+    await page.click(CUR + '.hero [data-act="retry"]');
+    await page.waitForSelector(CUR + '.hero .ans', { timeout: 15000 });
+    check((await text(page, CUR + '.hero .ans')).trim() === 'Go tonight', 'Try again brings the answer');
+    // Then it goes down again, seven hours later: the last forecast stays, marked.
+    net.forecast = 'down';
+    await page.clock.setFixedTime(new Date(GO + 7 * HOUR + 5 * MIN));
+    await page.click(CUR + '.hero [data-act="retry"]');
+    await page.waitForFunction(() => /Couldn’t refresh/.test((document.querySelector('.page[aria-current="true"] .hero .upd') || {}).textContent || ''), null, { timeout: 20000 });
+    check(/^Couldn’t refresh\. Updated 7 h ago · Try again$/.test(norm(await text(page, CUR + '.hero .upd')).trim()) && await page.locator(CUR + '.hero .ans').isVisible(), 'a failed refresh keeps the last forecast, marked “Couldn’t refresh. Updated 7 h ago · Try again”');
+    await shot(page, 'phone-stale');
+    // Status says what failed.
+    await page.click(CUR + '[data-act="settings"]');
+    await page.click('#sheet [data-act="settings-page"][data-page="status"]');
+    const status = await text(page, '#sheet .status');
+    check(/Forecast: failed/.test(status) && /Places: \d+ found/.test(status) && /Parking and toilets: \d+ found/.test(status), 'Settings, Status lists what the app asked for and what failed');
+    await layout(page, 'status (phone)');
+    await shot(page, 'phone-status');
+    reset();
+    await context.close();
+  }
+  for (const [mode, label] of [['down', 'the open map is down'], ['remark', 'the open map answers with an error note'], ['empty', 'the open map answers with nothing']]) {
+    net.overpass = mode;
+    const { page, context } = await open({ time: GO });
+    await addPlace(page, 'Denv');
+    await page.waitForFunction(() => /Couldn’t load places near Denver/.test((document.querySelector('.page[aria-current="true"] .pick') || {}).textContent || ''), null, { timeout: 20000 });
+    check(await page.locator(CUR + '.pick [data-act="spots-retry"]').isVisible() && await page.locator(CUR + '.pick [data-act="plan-new"]').isVisible(), `${label}: “Couldn’t load places near Denver. Try again”, and you can still plan`);
+    check(await page.evaluate(() => window.__gh.db.all('cache').then((rows) => rows.filter((r) => /^overpass:/.test(r.url)).length)) === 0, `${label}: the failed answer is not remembered`);
+    if (mode === 'down') await shot(page, 'phone-places-down');
+    net.overpass = 'ok';
+    await page.click(CUR + '.pick [data-act="spots-retry"]');
+    await page.waitForSelector(CUR + '.pick .srow', { timeout: 15000 });
+    check((await text(page, CUR + '.pick .srow .n')).trim() === 'Inspiration Point', `${label}: Try again loads them`);
+    reset();
+    await context.close();
+  }
+  {
+    // Slow: twenty seconds, longer than the old fifteen-second limit. A note shows, then the place fills in.
+    net.overpass = 'slow';
+    const { page, context } = await open({ time: GO });
+    await addPlace(page, 'Denv');
+    await page.waitForSelector(CUR + '.pick .pstate[aria-busy="true"]');
+    check(/Looking for places near Denver/.test(await text(page, CUR + '.pick .pstate')), 'places slow: “Looking for places near Denver…” shows meanwhile');
+    await shot(page, 'phone-places-looking');
+    await page.waitForSelector(CUR + '.pick .srow', { timeout: 40000 });
+    check((await text(page, CUR + '.pick .srow .n')).trim() === 'Inspiration Point', 'places answering after 20 seconds still arrive');
+    reset();
+    // The failed-then-reopened case: down now, and the app looks again when it is next opened.
+    net.overpass = 'down';
+    await page.evaluate(() => window.__gh.db.all('cache').then((rows) => Promise.all(rows.filter((r) => /^overpass:/.test(r.url)).map((r) => window.__gh.db.del('cache', r.url)))));
+    await page.reload();
+    await page.waitForFunction(() => /Couldn’t load places/.test((document.querySelector('.page[aria-current="true"] .pick') || {}).textContent || ''), null, { timeout: 20000 });
+    net.overpass = 'ok';
+    await page.reload();
+    await page.waitForSelector(CUR + '.pick .srow', { timeout: 15000 });
+    check(true, 'a failed lookup is tried again when the app next opens');
+    // Parking and toilets lookup down.
+    await context.close();
+    reset();
+  }
+  {
+    net.near = 'down';
+    const { page, context } = await open({ time: GO });
+    await addPlace(page, 'Denv');
+    await page.waitForSelector(CUR + '.pick .srow', { timeout: 15000 });
+    await page.waitForFunction(() => window.__gh.DATA[window.__gh.S.current].near === 'error', null, { timeout: 15000 });
+    await page.click(CUR + '[data-act="spots-all"]');
+    await page.click('.chip[data-k="parking"]');
+    check(/Couldn’t check for parking and toilets/.test(await text(page, '.screen')), 'parking and toilets lookup down: says it couldn’t check');
+    net.near = 'ok';
+    await page.click('[data-act="near-retry"]');
+    await page.waitForFunction(() => document.querySelectorAll('.spotgrid .srow').length === 2, null, { timeout: 15000 });
+    check(true, 'and Try again fills it in');
+    reset();
+    // Map tiles down: the plan still works.
+    net.tiles = 'down';
+    await page.click('#bar [data-act="open-today"]');
+    await page.click(CUR + '.pick [data-act="plan-new"]');
+    await page.waitForSelector('#spotName');
+    await page.waitForFunction(() => /couldn’t load|couldn’t start/.test((document.querySelector('#map') || {}).textContent || ''), null, { timeout: 25000 });
+    check(await page.locator('[data-act="share-go"]').isVisible() && /Search for the venue, or type coordinates/.test(await text(page, '#map')), 'map down: the plan and Share still work, and it says what to do instead');
+    reset();
+    await context.close();
+  }
+  {
+    // Location: unavailable is a different message from not allowed.
+    const { page, context } = await open({ geo: { latitude: 39.7392, longitude: -104.9903 }, time: GO });
+    await page.click('#bar [data-act="open-list"]');
+    await page.click('[data-act="locate"]');
+    await page.waitForFunction(() => document.querySelector('.page[aria-current="true"] .hero .ans'), null, { timeout: 15000 });
+    check((await text(page, CUR + '.hero h2')).trim() === 'Denver', 'Use my location adds where you are');
     await addPlace(page, 'Bould');
-    check(await page.locator('.page').count() === 2 && await page.locator('#bar .dot').count() === 2, 'a second place gets its own page and its own dot');
-    check((await text(page, CUR + '.hero h2')) === 'Boulder' && await page.locator('#bar .dot[aria-current="true"]').getAttribute('aria-label') === 'Boulder', 'adding a place opens its page');
+    await page.click('#bar [data-act="open-list"]');
+    await page.click('[data-act="locate"]');
+    await page.waitForFunction(() => { const h = document.querySelector('.page[aria-current="true"] .hero h2'); return h && h.textContent.trim() === 'Denver'; });
+    const order = await page.evaluate(() => window.__gh.S.places.map((p) => p.name));
+    check(order.join('|') === 'Denver|Boulder', 'Use my location a second time keeps its position in the list');
+    await context.close();
+  }
+
+  // ---------- 8. Locations: swipe, dots, "2 of 3", Back ----------
+  {
+    const { page, context } = await open({ time: GO });
+    await addPlace(page, 'Denv');
+    await addPlace(page, 'Bould');
+    check(await page.locator('.page').count() === 2 && await page.locator('#bar .dot').count() === 2 && (await text(page, '#bar .count')).trim() === '2 of 2', 'a second place gets its own page, its own dot, and “2 of 2”');
+    check(await page.locator('.small').filter({ hasText: 'Add another place to swipe between them' }).count() === 0, 'the one-location hint is gone');
     const snap = await page.evaluate(() => getComputedStyle(document.getElementById('pager')).scrollSnapType);
     check(/x mandatory/.test(snap), 'pages snap, one place to a screen');
-    await page.evaluate(() => document.getElementById('pager').scrollTo({ left: 0 }));
-    await page.waitForFunction(() => document.querySelector('.page[aria-current="true"] .hero h2').textContent.trim() === 'Denver');
-    check(await page.locator('#bar .dot[aria-current="true"]').getAttribute('aria-label') === 'Denver', 'swiping moves to the next place, and the dots follow');
-    check(await page.evaluate(() => localStorage.getItem('gh.current')) === '"39.74,-104.99"', 'the place you were on is remembered');
-    check(await page.locator('.page:not([aria-current])').evaluate((el) => el.inert), 'the page that is off screen can’t be tabbed into');
-    await page.keyboard.press('ArrowRight');
+    // A touch swipe that starts on the place card moves between locations.
+    const card = await page.locator(CUR + '.pick').boundingBox();
+    const cdp = await context.newCDPSession(page);
+    const y = card.y + card.height / 2;
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 60, y }] });
+    for (let x = 80; x <= 340; x += 26) await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y }] });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    const swiped = await page.waitForFunction(() => document.querySelector('.page[aria-current="true"] .hero h2').textContent.trim() === 'Denver', null, { timeout: 5000 }).then(() => true).catch(() => false);
+    check(swiped, 'a swipe that starts on the place card changes location');
+    check((await text(page, '#bar .count')).trim() === '1 of 2' && await page.locator('#bar .dot[aria-current="true"]').getAttribute('aria-label') === 'Denver', 'and the dots follow');
+    await page.locator('#bar .dot').nth(1).click();
     await page.waitForFunction(() => document.querySelector('.page[aria-current="true"] .hero h2').textContent.trim() === 'Boulder');
-    check(true, 'the arrow keys move between places');
-    await page.locator('#bar .dot').first().click();
-    await page.waitForFunction(() => document.querySelector('.page[aria-current="true"] .hero h2').textContent.trim() === 'Denver');
     check(true, 'tapping a dot opens that place');
-    const widths = await page.evaluate(() => Array.from(document.querySelectorAll('.page')).map((p) => p.getBoundingClientRect().width === window.innerWidth));
-    check(widths.every(Boolean), 'every page is the full width of the screen');
-    await page.waitForTimeout(700);
+    check(await page.evaluate(() => localStorage.getItem('gh.current')) === '"40.02,-105.27"', 'the place you were on is remembered');
     await shot(page, 'phone-two-places');
-
-    // The list of places, and Compare.
-    await page.click('#bar [data-act="open-list"]');
-    await page.waitForFunction(() => document.querySelectorAll('.lrow .big').length === 2);
-    const row = await text(page, '.lrow');
-    check(/Denver/.test(row) && /sunset \d/.test(row) && await page.locator('.lrow .swatch').count() === 2, 'the list shows each place with tonight’s score, its sunset and a swatch of its sky');
-    await shot(page, 'phone-places');
-    await layout(page, 'places (phone)'); await contrast(page, 'places');
-    await page.click('[data-act="compare"]');
-    await page.waitForFunction(() => document.querySelectorAll('table.cmp td button').length === 12);
-    check(await page.locator('table.cmp tr').count() === 3, 'compare: one row per saved place');
-    await shot(page, 'phone-compare');
-    await layout(page, 'compare (phone)');
-    await page.locator('table.cmp tr').nth(1).locator('td button').nth(2).click();
-    await page.waitForSelector(CUR + '.hero');
-    check((await text(page, CUR + '.hero h2')) === 'Denver' && /Monday/.test(await text(page, '#sheetTitle')), 'compare: a cell opens that place, with that evening’s sheet');
-    await page.locator('#sheet [data-act="sheet-close"]').click();
-    await page.click('#bar [data-act="open-list"]');
-    await page.locator('.lrow').nth(1).click();
-    check((await text(page, CUR + '.hero h2')) === 'Boulder', 'the list: tapping a place opens its page');
+    // Back from every kind of screen and sheet returns one level.
+    const depth = () => page.evaluate(() => [window.__gh.S.view ? window.__gh.S.view.type : 'today', window.__gh.S.sheet ? window.__gh.S.sheet.kind : ''].join('/'));
+    const trail = [];
+    await page.click('#bar [data-act="open-plans"]'); trail.push(await depth());
+    await page.click('#bar [data-act="open-list"]'); trail.push(await depth());
+    await page.click('[data-act="settings"]'); trail.push(await depth());
+    await page.goBack(); await page.waitForSelector('#sheetback', { state: 'hidden' }); trail.push(await depth());
+    await page.goBack(); await page.waitForSelector('.plan-row, .empty'); trail.push(await depth());
+    await page.goBack(); await page.waitForSelector(CUR + '.hero'); trail.push(await depth());
+    check(trail.join(' ') === 'plans/ list/ list/settings list/ plans/ today/', `Back returns one level each time (${trail.join(' ')})`);
+    for (const [act, sel] of [['open-plans', '.screen'], ['open-list', '#q']]) { await page.click(`#bar [data-act="${act}"]`); await page.waitForSelector(sel); check(await page.locator('#bar .tabs').isVisible(), `the bar is there on ${act.replace('open-', '')}`); }
+    // Edit and remove a place.
+    await page.click('[data-act="edit"]');
+    await page.locator('.chip-x').first().click();
+    const gone = await page.waitForFunction(() => document.querySelectorAll('.lrow').length === 1, null, { timeout: 5000 }).then(() => true).catch(() => false);
+    check(gone, 'Edit removes a place');
+    await page.click('[data-act="settings"]');
+    await page.click('#sheet .seg [data-v="metric"]');
+    check(await page.evaluate(() => localStorage.getItem('gh.imperialFirst')) === 'false', 'units are in Settings');
+    await layout(page, 'settings (phone)');
+    await shot(page, 'phone-settings');
     await context.close();
   }
 
-  // ---------- 3b. Golden Hour Places, and sharing ----------
+  // ---------- 9. Sharing today and the week ----------
   {
-    const { page, context } = await withDenver();
-    await page.waitForSelector(CUR + '.hero .score');
-    await page.waitForSelector(CUR + '.ghplaces .srow');
-    const cards = page.locator(CUR + '.ghplaces .spotcard');
-    check(await cards.count() === 3, 'each location’s page ends with Golden Hour Places: landmarks, adventurous, dining');
-    const heads = (await cards.locator('.eyebrow > span:first-of-type').allInnerTexts()).map((h) => h.trim());
-    check(heads.join('|') === 'LANDMARKS|ADVENTUROUS|DINING WITH A VIEW', `in that order (${heads.join(', ')})`);
-    check(await cards.nth(0).locator('.srow').count() === 3, 'the top three of each');
-    const icons = await page.locator(CUR + '.ghplaces .srow .sbadge use').evaluateAll((els) => els.map((e) => e.getAttribute('href')));
-    check(icons.length === 9 && icons.every((h) => /^#k-[a-z]+$/.test(h) && document_has(h)), `every place has a picture of its kind (${[...new Set(icons)].join(' ')})`);
-    const kinds = Object.fromEntries(await page.locator(CUR + '.ghplaces .srow').evaluateAll((els) => els.map((e) => [e.querySelector('.n').textContent.trim(), e.querySelector('.sbadge use').getAttribute('href')])));
-    check(kinds['Lookout Mountain'] === '#k-summit' && kinds['Sky Bar'] === '#k-rooftop' && (kinds['Inspiration Point'] || '#k-viewpoint') === '#k-viewpoint', 'summits, rooftops and viewpoints each have their own picture');
-    check(await page.locator(CUR + '.ghplaces .srow .sbadge .rank').allInnerTexts().then((t) => t.join('') === '123123123'), 'each keeps its rank, one to three, on the corner of its picture');
-    const strip = page.locator(CUR + '.strip .scard');
-    check(await strip.count() === 9 && await page.locator(CUR + '.strip').evaluate((e) => e.compareDocumentPosition(document.querySelector('[aria-current] .daily')) & 4), 'ideas for where to watch sit straight under the rating, above the details');
-    check(await page.locator(CUR + '.striprow').evaluate((e) => e.scrollWidth > e.clientWidth && document.documentElement.scrollWidth <= innerWidth), 'the ideas swipe sideways without widening the page');
-    const first = (await cards.nth(0).locator('.srow .n').first().innerText()).trim();
-    check(first === 'Sloan’s Lake Park' || first === 'Inspiration Point' || first === 'Sunset Park', `famous and sunset-named places rank first (${first})`);
-    check((await cards.nth(1).innerText()).includes('Lookout Mountain') && /effort/i.test(await cards.nth(1).innerText()), 'adventurous places say how much effort they take');
-    check((await cards.nth(2).innerText()).includes('May need a booking'), 'dining says it may need a booking');
-    await page.locator(CUR + '.ghplaces').scrollIntoViewIfNeeded();
-    await shot(page, 'phone-places-section');
-    await layout(page, 'place page with places (phone)');
-
-    const missing = await page.evaluate(() => Array.from(document.querySelectorAll('.srow use, .sbadge use')).map((u) => u.getAttribute('href')).filter((h) => !document.querySelector(h)));
-    check(missing.length === 0, `every picture is drawn in the page${missing.length ? ': missing ' + missing.join(' ') : ''}`);
-    await page.click(CUR + '[data-act="spots-all"]');
-    await page.waitForSelector('.screenhead h1');
-    check((await text(page, '.screenhead h1')) === 'Golden Hour Places', 'See all opens Golden Hour Places');
-    const parts = (await page.locator('.screen .spotcard .eyebrow > span:first-of-type').allInnerTexts()).map((h) => h.trim());
-    check(parts.join('|') === 'LANDMARKS|ADVENTUROUS|DINING WITH A VIEW|YOUR SPOTS', 'four parts: landmarks, adventurous, dining, your spots');
-    check(await page.locator('.screen .spotcard').first().locator('.srow').count() === 5, 'the top five of each');
-    await page.click('.screen [data-act="spots-more"]');
-    check(await page.locator('.screen .spotcard').first().locator('.srow').count() === 6, 'and the rest on Show more');
-    await shot(page, 'phone-golden-hour-places');
-    await layout(page, 'Golden Hour Places (phone)'); await contrast(page, 'Golden Hour Places');
-
-    check((await page.locator('.screen .spotcard').nth(2).locator('.srow .n').first().innerText()).trim() === 'Sky Bar', 'a rooftop with a view in its name ranks first for dining');
-    await page.locator('.screen .spotcard').nth(2).locator('.srow', { hasText: 'Linger' }).click();
-    await page.waitForSelector('.spothero h2');
-    check((await text(page, '.spothero h2')) === 'Linger', 'a place opens on its own screen');
-    check(await page.locator('a:has-text("Website")').count() === 1 && await page.locator('a:has-text("Call to book")').count() === 1, 'with its website and a way to book');
-    check(/here/i.test(await text(page, '.screen')), 'and tonight’s sunset there');
-    await shot(page, 'phone-spot');
-    await layout(page, 'a place (phone)'); await contrast(page, 'a place');
-    await page.locator('[data-act="share-spot"]').first().click();
-    await page.waitForFunction(() => navigator.clipboard.readText().then((t) => t.includes('#s=')));
-    const spotLink = await page.evaluate(() => navigator.clipboard.readText());
-    check(/^Linger: a great place to watch the sunset near Denver\./.test(spotLink) && G_decode(spotLink), 'sharing a place copies a message and a link to it');
-    await page.click('[data-act="spot-save"]');
-    await page.waitForFunction(() => document.querySelector('.screen').textContent.includes('In your spots'), null, { timeout: 5000 }).catch(() => {});
-    check((await text(page, '.screen')).includes('In your spots'), 'Save to your spots');
-    await page.click('[data-act="spot-plan"]');
-    await page.waitForSelector('.timeline');
-    check(await page.inputValue('#spotName') === 'Linger' && await page.inputValue('#spotType') === 'venue', 'Plan this evening here fills in the plan with the place');
-    await page.click('[data-act="close-view"]');
-
-    await page.waitForSelector(CUR + '[data-act="spots-all"]');
-    await page.click(CUR + '[data-act="spots-all"]');
-    check((await page.locator('.screen .spotcard').nth(3).innerText()).includes('Linger'), 'a saved place appears under Your spots');
-    await page.click('[data-act="spot-add"]');
-    await page.fill('#spotName', 'The bench'); await page.dispatchEvent('#spotName', 'change');
-    await page.fill('#coords', '39.7400, -105.0100'); await page.dispatchEvent('#coords', 'change');
-    await page.click('[data-act="spot-create"]');
-    check((await page.locator('.screen .spotcard').nth(3).innerText()).includes('The bench'), 'Add your own spot');
-    await page.click('[data-act="close-view"]');
-    await page.waitForSelector(CUR + '.ghplaces');
-    check((await page.locator(CUR + '.ghplaces .spotcard').count()) === 4, 'your spots join the foot of the page');
-
+    const { page, context } = await open({ time: GO });
+    await addPlace(page, 'Denv');
+    await waitPlaces(page);
+    await page.waitForTimeout(1500);
     await page.click(CUR + '[data-act="share-today"]');
-    await page.waitForFunction(() => navigator.clipboard.readText().then((t) => t.startsWith('Tonight')), null, { timeout: 10000 });
-    const today = await page.evaluate(() => navigator.clipboard.readText());
-    const r0 = expectedDenver(0).rating;
-    check(today.startsWith(`Tonight's sunset in Denver: ${r0.score.toFixed(1)}/5, ${r0.colourClass.toLowerCase()} colour.`) && /#l=Denver~39\.7392~-104\.9903~America%2FDenver/.test(today), `one tap shares tonight’s sunset, with a link that opens it (${today.slice(0, 160)})`);
-    const card = await page.evaluate(async () => { const f = await window.__gh.card(); return f ? [f.type, f.size] : null; });
-    check(card && card[0] === 'image/png' && card[1] > 20000, 'and a picture of it, for apps that take one');
-    await context.close();
-
-    const opened = await open({ hash: '#l=Boulder~40.0150~-105.2705~America%2FDenver' });
-    await opened.page.waitForFunction(() => { const h = document.querySelector('.page[aria-current="true"] .hero h2'); return h && h.textContent.trim() === 'Boulder'; });
-    check(true, 'a shared location link adds that location and opens it');
-    await opened.context.close();
-    const spotOpen = await open({ hash: '#s=' + spotLink.split('#s=')[1] });
-    await spotOpen.page.waitForSelector('.spothero h2');
-    check((await text(spotOpen.page, '.spothero h2')) === 'Linger' && (await text(spotOpen.page, '.spothero')).includes('Shared with you'), 'a shared place link opens that place');
-    await spotOpen.context.close();
-
-    net.overpass = 'down';
-    const down = await open();
-    await addPlace(down.page, 'Bould');
-    await down.page.waitForSelector(CUR + '[data-act="spots-retry"]');
-    check((await text(down.page, CUR + '.ghplaces')).includes('Couldn’t load places near Boulder'), 'when places can’t load, it says so, with Try again');
-    net.overpass = 'ok';
-    await down.page.click(CUR + '[data-act="spots-retry"]');
-    await down.page.waitForSelector(CUR + '.ghplaces .srow');
-    check(true, 'Try again finds them');
-    await down.context.close();
-  }
-
-  // ---------- 4. The plan: pin, times, bring list, save, offline, share, calendar ----------
-  let shareLink = '';
-  {
-    const { page, context } = await withDenver();
-    await page.waitForSelector(CUR + '.hero .score');
-    await page.click(CUR + '[data-act="plan-new"]');
-    await page.waitForSelector('.maplibregl-canvas', { timeout: 20000 }).catch(() => {});
-    const hasMap = await page.locator('.maplibregl-canvas').count() === 1;
-    check(hasMap, 'plan: the map loads from this site’s own copy of MapLibre, under the content security policy');
-    check(hasMap && (await text(page, '#map')).includes('Tap the map to drop a pin'), 'plan: the map says to tap to drop a pin');
-    await shot(page, 'phone-plan-empty');
-    if (hasMap) {
-      await page.locator('.maplibregl-canvas').click({ position: { x: 120, y: 100 } });
-      await page.waitForSelector('.timeline');
-      check(await page.locator('.pin').count() === 1 && /^\d+\.\d{5}, -\d+\.\d{5}$/.test(await page.inputValue('#coords')), 'plan: tapping the map drops the pin');
-    }
-    await page.fill('#coords', '39.7323, -105.2391'); await page.dispatchEvent('#coords', 'change');
-    await page.waitForSelector('.timeline');
-    await page.fill('#spotName', 'Lookout <b>Mountain</b>'); await page.dispatchEvent('#spotName', 'change');
-    await page.selectOption('#spotType', 'peak');
-    await page.fill('#walkIn', '10'); await page.dispatchEvent('#walkIn', 'change');
-    check(await page.locator('.maplibregl-canvas').count() === (hasMap ? 1 : 0) && await page.inputValue('#spotName') === 'Lookout <b>Mountain</b>', 'plan: editing keeps the map and what was typed');
-    check((await text(page, '.hero h2')) === 'Lookout <b>Mountain</b>' && await page.locator('.hero h2 b').count() === 0, 'plan: a name is shown as text, never as markup');
-    const exp = expectedDenver(0);
-    const spotTimes = G.eveningTimes(G.solarNoonGuess(2026, 6, 20, -105.2391), 39.7323, -105.2391);
-    const km = G.distance(DENVER.latitude, DENVER.longitude, 39.7323, -105.2391) / 1000, travel = G.travelMinutes(km), buffer = G.bufferMinutes(exp.rating.score, 6);
-    const pt = G.planTimes(spotTimes, { walkIn: 10, travel, buffer });
-    const fmt = (ms) => new Intl.DateTimeFormat('en-US', { timeZone: 'America/Denver', hour: 'numeric', minute: '2-digit' }).format(ms).replace(/ /g, ' ').toLowerCase();
-    const tl = await text(page, '.timeline');
-    check(['leaveBy', 'meetAt', 'sunset', 'stayUntil', 'headBackBy'].every((k) => tl.includes(fmt(pt[k]))), `plan: leave by, meet at, sunset, stay until and head back by follow the rules (${travel} min travel, ${buffer} min buffer)`);
-    check(tl.includes('From Denver') && (await text(page, '.col:nth-child(2)')).includes('Never shared'), 'plan: “Leaving from” is shown, and said to be never shared');
-    const items = await page.locator('.item').count();
-    check(items >= 1 && items <= 7, `plan: the bring list has ${items} items, never more than seven`);
-    check((await text(page, '.items')).includes('Torch or phone light') && /°F · \d+°C|The walk back/.test(await text(page, '.items')), 'plan: each item says why');
-    const dark = await text(page, '.facts');
-    check(dark.includes('about 10 minutes') && dark.includes(fmt(pt.headBackBy)) && /moon/i.test(dark), 'plan: after-dark facts: the walk back, last light, the moon');
-    await page.fill('#newItem', 'Camera'); await page.click('[data-act="item-add"]');
-    await page.locator('.item .who').first().fill('Sam'); await page.locator('.item .who').first().dispatchEvent('change');
-    await page.locator('.item input[type=checkbox]').nth(1).check();
-    check((await text(page, '.items')).includes('Camera'), 'plan: you can add your own item');
-    await shot(page, 'phone-plan');
-    await layout(page, 'plan (phone)'); await contrast(page, 'plan');
-    await page.click('[data-act="plan-save"]');
-    await page.waitForSelector('[data-act="share"]');
-    check(await page.locator('[data-act="calendar"]').isVisible() && await page.locator('a:has-text("Directions")').isVisible(), 'plan: once saved it offers Share, Add to calendar and Directions');
-    check(/google\.com\/maps\/dir\/\?api=1&destination=39\.7323,-105\.2391/.test(await page.locator('a:has-text("Directions")').getAttribute('href')), 'plan: Directions opens maps at the spot');
-    const saved = await page.evaluate(() => window.__gh.S.plans[0]);
-    check(hasMap ? /^data:image\/jpeg/.test(saved.mapImage || '') : true, 'plan: a picture of the map is kept with the plan for offline');
-
-    // Share
-    await page.click('[data-act="share"]');
-    check((await text(page, '#shareNotice')).includes('Anyone with this link can see the place, time and names'), 'share: the notice comes first');
-    await page.click('[data-act="share-go"]');
-    await page.waitForFunction(() => navigator.clipboard.readText().then((t) => t.includes('#p=')));
-    shareLink = await page.evaluate(() => navigator.clipboard.readText());
-    const payload = shareLink.split('#p=')[1];
-    const json = new TextDecoder().decode(G.fromBase64Url(payload));
-    check(shareLink.length < 2000 + 60, `share: the link is ${shareLink.length} characters`);
-    check(!/leave|travel|start|buffer/i.test(json) && !json.includes('104.99') && !json.includes(String(Math.round(pt.leaveBy / MIN))), 'share: the link holds no leave-by time, travel time or start point');
-    check(json.includes('"w":10'), 'share: it does hold the walk in, which belongs to the spot');
-
-    // Calendar
-    const [download] = await Promise.all([page.waitForEvent('download'), page.click('[data-act="calendar"]')]);
-    const ics = fs.readFileSync(await download.path(), 'utf8');
-    const stamp = (ms) => new Date(Math.round(ms / 1000) * 1000).toISOString().replace(/[-:]/g, '').replace('.000', '');
-    const dt = (k) => { const m = ics.match(new RegExp(k + ':(\\d{8}T\\d{6}Z)')); return m ? Date.UTC(+m[1].slice(0, 4), +m[1].slice(4, 6) - 1, +m[1].slice(6, 8), +m[1].slice(9, 11), +m[1].slice(11, 13), +m[1].slice(13, 15)) : 0; };
-    check(Math.abs(dt('DTSTART') - pt.leaveBy) < 1000 && Math.abs(dt('DTEND') - pt.headBackBy) < 1000, 'calendar: the organiser’s event runs from leave-by to head-back-by');
-    check(ics.includes('TRIGGER:-PT90M') && ics.includes('SUMMARY:Sunset at Lookout <b>Mountain</b>') && ics.replace(/\r\n /g, '').includes('#p='), 'calendar: an alert 90 minutes before, the title, and the share link in the notes');
-    void stamp;
-
-    // Saved, reloaded, offline
-    await page.click('[data-act="close-view"]');
-    check((await text(page, '.plan-row')).includes('Lookout') && (await text(page, '.plan-row')).includes('meet at'), 'plans: the saved plan is listed');
-    await shot(page, 'phone-plans');
-    await layout(page, 'plans (phone)');
-    net.forecast = 'down'; net.tiles = 'down';
-    await context.setOffline(true);
-    await page.evaluate(() => { window.__reloaded = true; });
-    const page2 = await context.newPage();
-    await page2.clock.setFixedTime(new Date(NOON + 45 * MIN));
-    await context.setOffline(false);            // the test server stands in for the offline app shell (the service worker is tested below)
-    await page2.goto(BASE);
-    await page2.waitForSelector('#view .hero');
-    await context.setOffline(true);
-    await page2.click('#bar [data-act="open-plans"]');
-    await page2.click('.plan-row');
-    await page2.waitForSelector('.timeline');
-    check((await text(page2, '.timeline')).includes(fmt(pt.meetAt)), 'offline: a saved plan opens in full');
-    check(await page2.locator('.item input[type=checkbox]:checked').count() === 1 && (await page2.locator('.item .who').first().inputValue()) === 'Sam', 'offline: ticks and names persist after a reload');
-    check(hasMap ? await page2.locator('#map img, .map img').count() === 1 : true, 'offline: the plan shows its saved map picture');
-    await shot(page2, 'phone-plan-offline');
-    await page2.click('[data-act="close-view"]');
-    check(await page2.locator('.plan-row').count() === 1, 'back from a saved plan returns to the list of plans');
-    await page2.click('[data-act="close-view"]');
-    check(await page2.locator(CUR + '.hero .score .n').isVisible() && (await text(page2, '#banner')).includes('Offline. Forecast updated'), 'offline: the cached forecast shows, with its age');
-    await context.setOffline(false); net.forecast = 'ok'; net.tiles = 'ok';
+    await page.waitForFunction(() => window.__shares.length === 1);
+    await page.click(CUR + '[data-act="share-week"]');
+    await page.waitForFunction(() => window.__shares.length === 2);
+    const [a, b] = await shares(page);
+    check(/\.png\|image\/png/.test(a.files[0] || '') && /^Go tonight in Denver\./.test(a.text) && /be there by/.test(a.text), 'share tonight: the picture, the answer and the time, in one tap');
+    check(/-week\.png\|image\/png/.test(b.files[0] || '') && /Sunsets this week in Denver:/.test(b.text) && /\(best\)/.test(b.text) && b.text.split('\n').length >= 6, 'share the week: a picture and a line an evening, the best one marked, in two taps');
+    const png = await page.evaluate(async () => { const f = await window.__gh.card(); const bmp = await createImageBitmap(f); return [bmp.width, bmp.height]; });
+    check(png[0] === 1080 && png[1] === 1350, 'the picture is 1080 by 1350');
     await context.close();
   }
 
-  // ---------- 5. The shared plan, as its recipient sees it ----------
+  // ---------- 10. "How was it?": once, the next morning ----------
   {
-    const { page, context } = await open({ hash: '#' + shareLink.split('#')[1] });
-    await page.waitForSelector('.timeline');
-    check((await text(page, '.hero h2')) === 'Lookout <b>Mountain</b>' && await page.locator('.hero h2 b').count() === 0, 'shared: the name arrives as text, not markup');
-    check(await page.locator('.tl').count() === 4 && !(await text(page, '.timeline')).includes('Leave by'), 'shared: four times, and no leave-by');
-    const bring = await text(page, '.group');
-    check(bring.includes('SAM') && bring.includes('Camera'), 'shared: the whole bring list, grouped by name');
-    check((await text(page, '#view')).includes('Plan as of') && await page.locator('[data-act="calendar"]').isVisible() && await page.locator('a:has-text("Directions")').isVisible(), 'shared: “Plan as of”, Add to calendar and Directions');
-    check(await page.locator('#bar').isHidden() && await page.locator('.pager').count() === 0, 'shared: read-only, with none of the app’s own places');
-    await page.waitForSelector('.card .stars', { timeout: 5000 }).catch(() => {});
-    check(await page.locator('.card .stars').count() === 1, 'shared: the live score for the spot when online');
-    await shot(page, 'phone-shared');
-    await layout(page, 'shared (phone)'); await contrast(page, 'shared');
-    await context.close();
-    const bad = await open({ hash: '#p=' + shareLink.split('#p=')[1].slice(0, 30) });
-    check((await text(bad.page, '#view')).includes('This plan link is incomplete. Ask for it again'), 'shared: an incomplete link says so');
-    await bad.context.close();
-  }
-
-  // ---------- 6. Other states ----------
-  {
-    // The forecast can't be reached and nothing is cached.
-    net.forecast = 'down';
-    const a = await open();
-    await addPlace(a.page, 'Denv');
-    check((await text(a.page, CUR + '.hero')).includes('Couldn’t reach the forecast') && await a.page.locator(CUR + '[data-act="retry"]').isVisible(), 'forecast failed: says so, with Try again');
-    net.forecast = 'ok';
-    await a.page.click(CUR + '[data-act="retry"]');
-    await a.page.waitForSelector(CUR + '.hero .score');
-    check(true, 'forecast failed: Try again recovers');
-    // No sunset: Tromsø in June.
-    await addPlace(a.page, 'Trom');
-    check((await text(a.page, CUR + '.hero')).includes('No sunset here on this date'), 'midnight sun: “No sunset here on this date”');
-    check(await a.page.locator(CUR + '[data-act="plan-new"]').count() === 0, 'midnight sun: nothing to plan');
-    await a.context.close();
-    // Search falls back to the bundled list when the search service is down.
-    net.geocode = 'down';
-    const b = await open();
-    await b.page.click('#bar [data-act="open-list"]');
-    await b.page.fill('#q', 'Reykjav');
-    await b.page.waitForSelector('.result');
-    check((await text(b.page, '.result')).includes('Reykjav'), 'search works offline, from the bundled list of places');
-    net.geocode = 'ok';
-    await b.context.close();
-  }
-  {
-    // After last light: tonight rolls over to tomorrow, and "How was it?" is asked once.
-    const exp = expectedDenver(0);
-    const first = await withDenver({ time: NOON + 2 * HOUR });          // an afternoon look logs today's forecast
-    await first.page.waitForSelector(CUR + '.hero .score');
-    await first.page.waitForTimeout(150);
-    state = await first.context.storageState({ indexedDB: true });
-    await first.context.close();
-    const { page, context } = await withDenver({ time: exp.times.lastLight + 10 * MIN });
-    await page.waitForSelector('#howWasIt');
-    check((await text(page, CUR + '.hero .when')).startsWith('Tomorrow evening'), 'after last light: Tonight shows tomorrow’s evening');
-    check((await text(page, CUR + '.hero .range')).startsWith('Forecast'), 'after last light: it keeps the Forecast label and range until midnight');
-    check((await text(page, '#howWasIt')).includes(`We forecast ${exp.rating.score.toFixed(1)}`), 'after last light: “How was it?” for today, against what was forecast');
-    await shot(page, 'phone-how-was-it');
-    await page.click('#howWasIt [data-v="4"]');
-    await page.waitForSelector('#toast:not([hidden])');
-    check(await page.locator('#howWasIt').count() === 0, '“How was it?” is asked once');
-    await page.click(CUR + '[data-act="log"]');
-    check((await text(page, '#view')).includes('You said 4 of 5') && (await text(page, '#view')).includes('within one star'), 'the answer is kept in the sunset log, on the device');
-    check(!net.calls.some((u) => /github|issues/.test(u)), 'nothing is sent anywhere');
-    await layout(page, 'log (phone)');
+    const { page, context } = await open({ time: GO });
+    await addPlace(page, 'Denv');
+    await page.waitForFunction(() => window.__gh.S.places[0].normals);
+    await page.waitForTimeout(300);
+    check(await page.locator('#howWasIt').count() === 0, 'no “How was it?” on the evening itself');
+    await page.clock.setFixedTime(new Date(GO + 20 * HOUR));   // 8 am the next morning
+    await page.reload();
+    await page.waitForSelector('#howWasIt', { timeout: 15000 });
+    check(/last night’s sunset in Denver/.test(await text(page, '#howWasIt')) && !/GitHub/.test(await text(page, '#howWasIt')), 'the next morning it asks about last night, with no mention of GitHub');
+    await page.click('#howWasIt [data-act="rate-later"]');
+    await page.waitForSelector('#howWasIt', { state: 'detached' });
+    await page.reload();
+    await page.waitForSelector(CUR + '.hero .ans', { timeout: 15000 });
+    await page.waitForTimeout(400);
+    check(await page.locator('#howWasIt').count() === 0, '“Not now” puts it away for good');
+    await page.click(CUR + '[data-act="settings"]');
+    await page.click('#sheet [data-act="settings-page"][data-page="log"]');
+    check(/No evenings rated yet/.test(await text(page, '#sheet')), 'the sunset log, and sending it to GitHub, live in Settings');
     await context.close();
   }
 
-  // ---------- 7. Tablet and desktop ----------
-  for (const [name, viewport] of [['tablet', { width: 820, height: 1180 }], ['desktop', { width: 1280, height: 800 }], ['small-phone', { width: 360, height: 640 }]]) {
-    const { page, context } = await withDenver({ viewport });
-    await page.waitForSelector(CUR + '.hero .score');
-    await layout(page, `place page (${name})`); await contrast(page, `place page (${name})`);
-    await shot(page, `${name}-place`);
-    if (name === 'desktop') {
-      const cols = await page.evaluate(() => { const c = document.querySelectorAll('.page[aria-current="true"] .two > .col'); return c[0].getBoundingClientRect().right <= c[1].getBoundingClientRect().left; });
-      check(cols, 'desktop: two columns from 900px');
-      check(parseFloat(await page.locator(CUR + '.score .n').evaluate((el) => getComputedStyle(el).fontSize)) >= 96, 'desktop: the score is at least 96px');
-    }
+  // ---------- 11. Other sizes ----------
+  for (const [name, viewport] of [['small-phone', { width: 320, height: 568 }], ['tablet', { width: 820, height: 1180 }], ['desktop', { width: 1280, height: 800 }]]) {
+    const { page, context } = await open({ time: GO, viewport });
+    await addPlace(page, 'Denv');
+    await waitPlaces(page);
+    await page.waitForTimeout(200);
+    await layout(page, `today (${name})`); await contrast(page, `today (${name})`);
+    await shot(page, `${name}-today`);
+    await page.click(CUR + '.pick [data-act="plan-new"]');
+    await page.waitForSelector('#spotName');
+    await layout(page, `plan (${name})`);
+    await shot(page, `${name}-plan`);
     await page.click('#bar [data-act="open-list"]');
-    await layout(page, `places (${name})`);
-    await shot(page, `${name}-places`);
+    await layout(page, `places tab (${name})`);
+    await context.close();
+  }
+  {
+    // Large text: at 200% nothing is cut off sideways.
+    const { page, context } = await open({ time: GO, viewport: { width: 390, height: 844 } });
+    await addPlace(page, 'Denv');
+    await waitPlaces(page);
+    await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
+    await page.waitForTimeout(200);
+    const wide = await page.evaluate(() => Math.max(document.documentElement.scrollWidth - window.innerWidth, ...Array.from(document.querySelectorAll('.page[aria-current], .screen')).map((e) => e.scrollWidth - e.clientWidth)));
+    check(wide <= 0, 'with the page’s base text size doubled, nothing scrolls sideways');
+    const unlabelled = await page.evaluate(() => Array.from(document.querySelectorAll('button, a.btn, input, select')).filter((e) => e.getClientRects().length && !(e.textContent.trim() || e.getAttribute('aria-label') || e.labels && e.labels.length || e.getAttribute('placeholder'))).length);
+    check(unlabelled === 0, 'every button and field has a name a screen reader can say');
     await context.close();
   }
 
-  // ---------- 8. The service worker: the app opens with no network at all ----------
+  // ---------- 12. The service worker: the app opens with no network at all ----------
   {
     const context = await browser.newContext({ viewport: { width: 390, height: 844 }, locale: 'en-US', timezoneId: 'America/Denver' });
     const page = await context.newPage();
@@ -687,18 +791,19 @@ const server = http.createServer((req, res) => {
     await page.reload();
     await context.setOffline(true);
     await page.reload();
-    await page.waitForSelector('.hero .score');
+    await page.waitForSelector('.hero .ans');
     check((await text(page, '.hero h2')).includes('Sample'), 'service worker: the app opens offline');
     await context.close();
   }
 
-  // ---------- 9. The build ----------
+  // ---------- 13. The build ----------
   {
     const web = path.join(__dirname, '..', 'web'), version = fs.readFileSync(path.join(__dirname, '..', 'VERSION'), 'utf8').trim();
     for (const f of ['index.html', 'app.css', 'core.js']) check(fs.readFileSync(path.join(web, f), 'utf8') === fs.readFileSync(path.join(ROOT, f), 'utf8'), `docs/${f} is the build of web/${f}`);
     for (const f of ['app.js', 'sw.js']) check(fs.readFileSync(path.join(web, f), 'utf8').replace(/__VERSION__/g, version) === fs.readFileSync(path.join(ROOT, f), 'utf8'), `docs/${f} is web/${f} with the version stamped in`);
     const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
     check(/script-src 'self'/.test(html) && /style-src 'self'/.test(html) && !/unsafe-inline|unsafe-eval/.test(html), 'content security policy: scripts and styles from this site only');
+    check(/connect-src[^;]*photon\.komoot\.io/.test(html), 'the venue search host is allowed by the policy');
     check(!/https?:\/\/(fonts\.googleapis|unpkg|cdn)/.test(html + fs.readFileSync(path.join(ROOT, 'app.css'), 'utf8')), 'fonts and libraries are self-hosted');
   }
   check(problems.length === 0, `no script errors or policy violations${problems.length ? ': ' + problems.slice(0, 4).join(' | ') : ''}`);

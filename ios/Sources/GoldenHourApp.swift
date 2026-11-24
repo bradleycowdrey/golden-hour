@@ -1,3 +1,5 @@
+import EventKit
+import EventKitUI
 import SwiftUI
 import UIKit
 import WebKit
@@ -5,7 +7,8 @@ import WebKit
 /// Golden Hour for iPhone, first cut: the web app in a full-screen web view, so TestFlight has the same
 /// app the site serves. The site's service worker keeps it working offline once it has been opened
 /// (WKAppBoundDomains in Info.plist is what allows a service worker here). Links that leave the site
-/// (Google Maps, directions, GitHub) open in their own apps.
+/// (Google Maps, directions, Messages, GitHub) open in their own apps. Swiping from the left edge goes back a
+/// step, and "Add to calendar" opens Calendar's own new-event sheet.
 @main
 struct GoldenHourApp: App {
     @StateObject private var model = WebModel()
@@ -37,11 +40,12 @@ struct GoldenHourApp: App {
 }
 
 /// Holds the web view and what the screen needs to know about it.
-final class WebModel: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate {
+final class WebModel: NSObject, ObservableObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, EKEventEditViewDelegate {
     static let home = URL(string: "https://bradleycowdrey.github.io/golden-hour/")!
 
     @Published var failed = false
     let web: WKWebView
+    private var eventStore: EKEventStore?
 
     override init() {
         let config = WKWebViewConfiguration()
@@ -55,6 +59,8 @@ final class WebModel: NSObject, ObservableObject, WKNavigationDelegate, WKUIDele
         web.scrollView.contentInsetAdjustmentBehavior = .never
         web.scrollView.bounces = false
         web.allowsLinkPreview = false
+        web.allowsBackForwardNavigationGestures = true
+        web.configuration.userContentController.add(self, name: "goldenHour")
         web.navigationDelegate = self
         web.uiDelegate = self
         web.load(URLRequest(url: Self.home))
@@ -104,6 +110,33 @@ final class WebModel: NSObject, ObservableObject, WKNavigationDelegate, WKUIDele
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         webView.reload()
+    }
+
+    // MARK: Calendar
+
+    /// The page asks for a calendar event; Calendar's own sheet adds it, so no access to the calendar is needed.
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.name == "goldenHour", let body = message.body as? [String: Any], body["type"] as? String == "calendar" else { return }
+        guard let start = (body["start"] as? NSNumber)?.doubleValue, let end = (body["end"] as? NSNumber)?.doubleValue, let presenter else { return }
+        let store = EKEventStore()
+        let event = EKEvent(eventStore: store)
+        event.title = body["title"] as? String ?? "Sunset"
+        event.startDate = Date(timeIntervalSince1970: start / 1000)
+        event.endDate = Date(timeIntervalSince1970: max(end, start) / 1000)
+        event.location = body["location"] as? String
+        event.notes = body["notes"] as? String
+        if let minutes = (body["alarm"] as? NSNumber)?.doubleValue { event.addAlarm(EKAlarm(relativeOffset: -minutes * 60)) }
+        let editor = EKEventEditViewController()
+        editor.eventStore = store
+        editor.event = event
+        editor.editViewDelegate = self
+        eventStore = store
+        presenter.present(editor, animated: true)
+    }
+
+    func eventEditViewController(_ controller: EKEventEditViewController, didCompleteWith action: EKEventEditViewAction) {
+        controller.dismiss(animated: true)
+        eventStore = nil
     }
 
     // MARK: Windows and dialogs

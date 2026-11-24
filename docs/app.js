@@ -889,7 +889,7 @@
     const tail = r.verdict === 'skip' ? (next ? ` Try ${esc(dayName(next.date, true))}.` : '') : r.tier === 'outlook' ? ' Could change.' : '';
     return `<p class="ans" aria-hidden="true">${icon(r)}<span>${esc(answerText(ev))}</span></p>
       <p class="reason" aria-hidden="true">${esc(r.reason)}${tail}</p>
-      <p class="times" aria-hidden="true"><b>Sunset ${esc(timeText(t.sunset, p.tz))}</b>${r.verdict === 'skip' ? '' : ` · be there by ${esc(timeText(t.bestStart - 20 * MIN, p.tz))}`}</p>`;
+      <p class="atimes" aria-hidden="true"><b>Sunset ${esc(timeText(t.sunset, p.tz))}</b>${r.verdict === 'skip' ? '' : ` · be there by ${esc(timeText(t.bestStart - 20 * MIN, p.tz))}`}</p>`;
   }
   function spokenAnswer(ev, p, evs) {
     const r = ev.rating, next = r.verdict === 'skip' ? nextGood(evs, ev) : null;
@@ -936,11 +936,12 @@
   function morePlaces(p, ev) {
     const s = allSpots(p), best = bestPlace(p), r = ev.rating;
     const all = `<button type="button" class="more" data-act="spots-all" data-place="${esc(p.id)}">All places near ${esc(p.name)}</button>`;
-    if (!r || r.verdict === 'skip') return `<section class="card moreplaces">${all}</section>`;
+    if (r && r.verdict === 'skip') return `<section class="card moreplaces">${all}</section>`;
     const picks = ownSpots(p).slice(0, 2);
-    if (s) { picks.push(...s.easy.slice(0, 2), ...s.dining.slice(0, 1)); if (r.verdict === 'go') picks.push(...s.adventurous.slice(0, 1)); }
-    const rows = picks.filter((x) => !best || x.id !== best.id).slice(0, 3);
-    return `<section class="card moreplaces"><p class="eyebrow">More places</p>${rows.length ? rows.map((x) => spotRow(x, p)).join('') : best ? '' : placesState(p)}${all}</section>`;
+    if (s) { picks.push(...s.easy.slice(0, 2), ...s.dining.slice(0, 1)); if (r && r.verdict === 'go') picks.push(...s.adventurous.slice(0, 1)); }
+    // With an answer, the first place is already on top; without one (no forecast yet) the places still show here.
+    const rows = picks.filter((x) => !r || !best || x.id !== best.id).slice(0, 3);
+    return `<section class="card moreplaces"><p class="eyebrow">${r ? 'More places' : 'Where to watch'}</p>${rows.length ? rows.map((x) => spotRow(x, p)).join('') : r && best ? '' : placesState(p)}${all}</section>`;
   }
   function weekCard(p, evs) {
     const later = evs.find((e) => !e.rating && e.day > 5), today = localDate(now(), p.tz);
@@ -960,7 +961,7 @@
     if (ev.times.state === 'none') hero = `<section class="hero">${head}<p class="none">No sunset here on this date</p><p class="reason">${ev.times.polar === 'day' ? 'The sun stays up all night.' : 'The sun stays below the horizon.'}</p></section>`;
     else if (r) hero = `<section class="hero answer v-${r.verdict}" aria-label="${esc(spokenAnswer(ev, p, evs))}">${head}${answerBlock(ev, p, evs)}${updatedLine(p)}</section>`;
     else if (d.error) hero = `<section class="hero">${head}<p class="none">${d.error === 'ceiling' ? 'Refreshing again tomorrow' : 'Couldn’t reach the forecast'}</p>
-      <p class="times"><b>Sunset ${esc(timeText(ev.times.sunset, p.tz))}</b> · be there by ${esc(timeText(ev.times.bestStart - 20 * MIN, p.tz))}</p>
+      <p class="atimes"><b>Sunset ${esc(timeText(ev.times.sunset, p.tz))}</b> · be there by ${esc(timeText(ev.times.bestStart - 20 * MIN, p.tz))}</p>
       <div class="cta"><button type="button" class="btn white" data-act="retry">Try again</button></div></section>`;
     else if (d.fc) hero = `<section class="hero">${head}<p class="none">No forecast for this evening yet</p></section>`;
     else hero = `<section class="hero skeleton" aria-busy="true">${head}<div class="bone" data-w="40"></div><div class="bone" data-w="60"></div><div class="bone" data-w="50"></div></section>`;
@@ -1725,12 +1726,13 @@
   }
   const planDraft = () => (S.view && S.view.type === 'plan' ? S.view.draft : null);
   function startPlan(dr) { go({ type: 'plan', draft: dr }); autosave(); }
-  function setPin(lat, lon, name) {
+  function setPin(lat, lon, name, soon) {
     const dr = S.view.draft;
     keepFields();
     dr.spot.lat = Math.round(lat * 1e5) / 1e5; dr.spot.lon = Math.round(lon * 1e5) / 1e5;
     if (name) dr.spot.name = name;
-    autosave(); render();
+    autosave();
+    if (soon) renderSoon(); else render();
   }
   /** Reads the form back into the draft, so a redraw never loses typing. */
   function keepFields() {
@@ -2111,16 +2113,24 @@
       if (Math.abs(dx) >= 50 && Math.abs(dx) > Math.abs(dy) * 1.5) stepSheet(dx < 0 ? 1 : -1);
     }, { passive: true });
   }
+  // A field's change arrives as the finger goes down on whatever is tapped next. Redrawing then would replace
+  // that button mid-tap and lose the tap, so the redraw waits until the finger is up.
+  let pressing = false, drawLater = false;
+  const released = () => { pressing = false; if (drawLater) { drawLater = false; keepFields(); render(); } };
+  document.addEventListener('pointerdown', () => { pressing = true; }, true);
+  document.addEventListener('pointerup', () => setTimeout(released, 0), true);
+  document.addEventListener('pointercancel', () => setTimeout(released, 0), true);
+  function renderSoon() { if (pressing) drawLater = true; else render(); }
   const PLAN_FIELDS = ['spotType', 'walkIn', 'spotName', 'arriveBy', 'travelMin', 'homeBy', 'planNote'];
   document.addEventListener('change', (e) => {
     const t = e.target;
     if (t.dataset && t.dataset.act === 'tick') return ACT.tick(t);
     if (t.id === 'anyDate') { if (/^\d{4}-\d{2}-\d{2}$/.test(t.value)) { const date = t.value, pid = t.dataset.place; t.value = ''; openSheet({ kind: 'day', placeId: pid || S.current, date }); } return; }
-    if (t.id === 'planDate') { const dr = planDraft(); if (dr && /^\d{4}-\d{2}-\d{2}$/.test(t.value)) { keepFields(); dr.date = t.value; dr.arriveBy = null; dr.scoreAtSave = null; autosave(); render(); } return; }
-    if (PLAN_FIELDS.includes(t.id)) { keepFields(); autosave(); render(); }
+    if (t.id === 'planDate') { const dr = planDraft(); if (dr && /^\d{4}-\d{2}-\d{2}$/.test(t.value)) { keepFields(); dr.date = t.value; dr.arriveBy = null; dr.scoreAtSave = null; if ($('#arriveBy')) $('#arriveBy').value = ''; autosave(); renderSoon(); } return; }
+    if (PLAN_FIELDS.includes(t.id)) { keepFields(); autosave(); renderSoon(); }
     if (t.id === 'coords') {
       const m = t.value.match(/(-?\d+(?:\.\d+)?)\s*[,\s]\s*(-?\d+(?:\.\d+)?)/);
-      if (m && Math.abs(m[1]) <= 90 && Math.abs(m[2]) <= 180) setPin(Number(m[1]), Number(m[2]));
+      if (m && Math.abs(m[1]) <= 90 && Math.abs(m[2]) <= 180) setPin(Number(m[1]), Number(m[2]), null, true);
       else if (t.value.trim()) toast('Type a latitude and longitude, like 39.7392, -104.9903');
     }
     if (t.dataset && t.dataset.actInput === 'who') {
