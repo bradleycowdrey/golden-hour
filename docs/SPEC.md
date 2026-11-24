@@ -244,6 +244,8 @@ Tiers are defined by evening, counted in the place's local calendar. Day 0 is to
   the top of each kind in turn. A place's screen links to Google Maps for photos and reviews.
 - **After "How was it?"** a card offers "Send it to GitHub": a pre-filled public issue with the date, the
   location's name, the forecast, its four parts and what you saw.
+- **What's behind the score** is folded away on a location's page: one row shows or hides the tiles, and
+  the choice is remembered. A day's sheet always shows them.
 - **Good and Great**: in the list of evenings, every Go evening is marked Good, or Great when its score is
   4.5 or above. No single evening is called best.
 - After last light the Tonight screen shows the next evening, but tiers do not shift until local

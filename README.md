@@ -13,7 +13,7 @@ leave, what to bring, and when to head home. It is in the same family as
 [Two Degrees](https://github.com/bradleycowdrey/two-degrees) and
 [Bearings](https://github.com/bradleycowdrey/bearings), and shows imperial and metric side by side.
 
-This is **Release 1** of the plan in [docs/SPEC.md](docs/SPEC.md). Version 0.9.4.
+This is **Release 1** of the plan in [docs/SPEC.md](docs/SPEC.md). Version 0.9.5.
 
 ## What it does
 
@@ -36,6 +36,7 @@ This is **Release 1** of the plan in [docs/SPEC.md](docs/SPEC.md). Version 0.9.4
   places and places named for the sunset first.
 - **Where to watch, straight under the rating**: ideas to swipe through, so the first screen answers "is it
   worth it?" and "where could I go?". Each place links to Google Maps for photos and reviews.
+- **Less on the page**: the tiles behind the score are folded behind one row until you ask for them.
 - **Tap an evening for its detail** in a sheet over the page, as in Two Degrees: swipe or use the arrows to
   move between evenings; the location's page stays where it was.
 - **Share in one tap**: tonight's sunset (with a picture of the sky), any place, or the app itself.

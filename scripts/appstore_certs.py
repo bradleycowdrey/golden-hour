@@ -9,6 +9,7 @@ Needs PyJWT and cryptography. The same script, and the same rule, as in the Two 
 """
 import json
 import os
+import re
 import time
 import urllib.error
 import urllib.request
@@ -25,15 +26,21 @@ def token():
                       os.environ["ASC_KEY_P8"], algorithm="ES256", headers={"kid": os.environ["ASC_KEY_ID"], "typ": "JWT"})
 
 
-def call(method, path):
-    req = urllib.request.Request(API + path, method=method,
+def call(method, path, body=None, soft=False):
+    """Calls the API. A failure stops the run, or with soft=True is reported as a warning and returns None.
+    Email addresses in Apple's replies are never printed: these logs are public."""
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(API + path, data=data, method=method,
                                  headers={"Authorization": "Bearer " + token(), "Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(req) as r:
             text = r.read()
             return json.loads(text) if text else {}
     except urllib.error.HTTPError as e:
-        print(f"::error::{method} {path} → {e.code}: {' '.join(e.read().decode().split())[:1500]}")
+        detail = re.sub(r"[\w.+-]+@[\w.-]+", "(email)", " ".join(e.read().decode().split()))[:1200]
+        print(f"::{'warning' if soft else 'error'}::{method} {path.split('?')[0]} → {e.code}: {detail}")
+        if soft:
+            return None
         raise SystemExit(1)
 
 
