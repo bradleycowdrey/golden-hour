@@ -597,3 +597,83 @@ svg.horizon text { font: 500 14px var(--font); fill: rgba(255,255,255,.8); color
 .foldrow .fa { font-size: 15px; font-weight: 600; color: var(--t85); }
 .foldrow .chev svg { display: block; width: 18px; height: 18px; color: var(--t70); transform: rotate(90deg); transition: transform .2s; }
 .foldrow .chev.up svg { transform: rotate(-90deg); }
+
+/* ===== The fix build: one answer, three places to be, sheets ===== */
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.link { display: inline; min-height: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.eyebrow .link { text-transform: none; letter-spacing: 0; font-size: 14px; min-height: 44px; padding: 0 2px; margin: -14px 0; }
+
+/* The bar: Today, Plans, Places; over Today, the dots for your locations */
+.bar { flex-direction: column; align-items: stretch; gap: 0; }
+.tabs { display: flex; justify-content: space-around; align-items: center; }
+.barbtn { flex: 1; max-width: 160px; opacity: .72; }
+.barbtn[aria-current="page"] { opacity: 1; }
+.barbtn[aria-current="page"] span { font-weight: 600; }
+.dotsrow { display: flex; align-items: center; justify-content: center; gap: 0; min-height: 30px; margin-bottom: -4px; }
+.dotsrow .dot { height: 30px; }
+.dotsrow .count { margin-left: 8px; font-size: 13px; font-weight: 500; color: var(--t85); }
+
+/* The answer */
+.hero.answer { padding: 22px 0 14px; }
+.hero .ans { display: flex; align-items: center; justify-content: center; gap: 12px; margin: 14px 0 6px; font-size: 44px; font-size: min(52px, 13.5cqw); font-weight: 300; line-height: 1.1; letter-spacing: -.025em; text-wrap: balance; }
+.hero .ans svg { width: 44px; height: 44px; flex: none; }
+.hero .ans.plain { font-size: 34px; }
+.hero .reason { max-width: 26em; margin: 0 auto; font-size: 18px; font-weight: 500; line-height: 1.35; text-wrap: balance; }
+.hero .times { margin: 12px 0 0; font-size: 19px; font-weight: 400; line-height: 1.3; }
+.hero .times b { font-weight: 600; }
+.hero .upd { margin: 10px 0 0; font-size: 13px; color: var(--t85); }
+.hero .upd.stale { color: #FFD9A8; font-weight: 500; }
+.hero .upd .link { display: inline-block; min-height: 44px; margin: -12px 0; padding: 0 4px; line-height: 44px; }
+.sheethero { padding: 6px 0 10px; }
+
+/* One place, and the way to plan it */
+.pick .cta { padding: 10px 0 0; }
+.pick .cta .btn { min-width: 220px; }
+.pstate { margin: 0; padding: 8px 2px; font-size: 15px; color: var(--t85); text-shadow: 0 1px 6px rgba(0,0,0,.35); }
+.card .pstate { text-shadow: none; }
+.pstate .link { display: inline-block; min-height: 44px; margin: -12px 0; padding: 0 4px; line-height: 44px; }
+.dayline { grid-template-columns: 40px minmax(0, 1fr) 20px; min-height: 64px; }
+.dayline .ic svg { width: 32px; height: 32px; }
+.dayline .n { font-size: 19px; font-weight: 600; }
+.moreplaces .more:first-child { border-top: 0; margin-top: 0; }
+.anydate { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 52px; margin-top: 6px; padding-top: 6px; border-top: .5px solid var(--hair); font-size: 16px; }
+.anydate input, .dateline input { min-height: 44px; padding: 0 12px; border: 0; border-radius: 12px; background: var(--fill); color: var(--text); font-size: 16px; color-scheme: dark; }
+.pagefoot { padding: 8px 4px 0; text-align: center; color: var(--t85); text-shadow: 0 1px 6px rgba(0,0,0,.4); }
+.pagefoot .link, .hint1 .link { display: inline-block; min-height: 44px; padding: 0 6px; line-height: 44px; }
+.hint1 { padding: 4px; text-align: center; color: var(--t85); text-shadow: 0 1px 6px rgba(0,0,0,.4); }
+.lrow .rt .v { font-size: 15px; white-space: nowrap; }
+
+/* The plan */
+.planhero { padding: 6px 0 10px; }
+.planhero .when { margin-top: 8px; }
+.planans { display: flex; align-items: center; gap: 8px; margin: 0 0 4px; font-size: 20px; }
+.planans svg { width: 24px; height: 24px; flex: none; }
+.planans b { font-weight: 600; }
+.chg { margin: 8px 0 0; padding: 8px 10px; border-radius: 10px; background: rgba(240,160,60,.2); color: #FFE2B0; font-size: 14px; font-weight: 500; }
+.plan-row .chg { display: inline-block; margin: 4px 0 0; padding: 2px 8px; }
+.plan-row .v { display: inline-flex; align-items: center; gap: 5px; font-size: 14px; font-weight: 600; white-space: nowrap; }
+.plan-row .v svg { width: 18px; height: 18px; }
+.vbox { display: flex; align-items: center; min-height: 46px; padding: 0 12px; border-radius: 12px; background: var(--fill); }
+.vbox input { flex: 1; min-width: 0; min-height: 44px; background: none; border: 0; outline: 0; color: var(--text); font-size: 16px; }
+.vbox input::placeholder { color: var(--t70); }
+.form input[type=time] { color-scheme: dark; }
+.acts .row .btn { flex: 1 1 auto; }
+.home .lead { margin: 0; font-size: 19px; font-weight: 500; line-height: 1.3; }
+.home .row .btn { flex: 1 1 auto; }
+.note { padding: 10px 12px; border-radius: 12px; background: var(--fill); font-size: 15px; }
+.warn.chgd { background: rgba(70,48,10,.85); color: #FFE9C2; }
+.light .facts b { font-weight: 600; }
+
+/* Places: filters */
+.chips { display: flex; flex-wrap: wrap; gap: 8px; padding: 2px 0; }
+.chip { min-height: 44px; padding: 0 16px; border: 0; border-radius: 980px; background: var(--card); color: var(--text); font-size: 15px; font-weight: 500; box-shadow: inset 0 0 0 .5px rgba(255,255,255,.2); }
+.chip[aria-pressed="true"] { background: #fff; color: var(--ink); font-weight: 600; }
+.srow .r.near { color: var(--t85); }
+
+/* Sheets */
+.sheet .hero { text-shadow: none; }
+.sheet .foot p { margin: 0 0 10px; font-size: 13px; line-height: 1.5; color: var(--t85); }
+.sheet .spothero { padding: 4px 0 6px; }
+.status .facts li.bad::before { background: #FF8A7A; }
+.status .facts li.ok::before { background: #8FD9A0; }
+.sheet .plan-row { color: var(--text); }
