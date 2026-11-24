@@ -1,9 +1,9 @@
 # Golden Hour: the fix plan
 
-Version 4. Follows the functional review of 24 November 2026.
+Version 5. Follows the functional review of 24 November 2026.
 
-**What happens next:** on your go, Release A is built and sent to TestFlight with a checklist for you to
-walk. Nothing new is added until A, B1 and B2 are done.
+**What happens next:** on your go, Release A (ten fixes so the app works on a real connection and never
+loses your plan) is built and sent to TestFlight with a checklist for you to walk. Nothing new is added until A, B1 and B2 are done.
 
 ## Who it is for
 
@@ -66,7 +66,7 @@ match their meaning; a place added offline keeps correct summer time.
 | Change | Done when |
 |---|---|
 | **One answer at the top**, warm and plain: "Go tonight", "Maybe tonight", or "Not tonight" with the reason and the next good evening ("Not tonight, rain's coming. Try Wednesday."). Go is 3.5 or more, Maybe 2.5 to 3.4, Not tonight below 2.5. Evenings three to five days out add "could change". | Fresh install on a phone: answer, time and place read back in under 10 seconds without scrolling |
-| **One time:** "Sunset 4:40 pm · be there by 4:10". Be there by is 20 minutes before best light: the time to be settled at the spot, with the walk in already done. "Updated 11:10" sits beside it. | Matches the plan's meet time to the minute, and still does after the plan is edited |
+| **One time:** "Sunset 4:40 pm · be there by 4:10". Be there by is 20 minutes before best light and means at the spot. The walk in and the drive are counted once, in the plan's "leave by", never in be there by. "Updated 11:10" sits beside it. | Matches the plan's meet time to the minute, and still does after the plan is edited |
 | **One place:** your own nearest spot if you have one, otherwise the top easy-to-reach place | Shown on Go and Maybe evenings |
 | **Not tonight** shows the next good evening instead of a place, and the button becomes "Plan Wednesday" | No "Plan this evening" on a Not tonight |
 | **Score, colour words and range move under "Why"**, one tap down. The number stays there; the stars go. | First screen has no number but the times |
@@ -81,14 +81,14 @@ match their meaning; a place added offline keeps correct summer time.
 
 | Change | Done when |
 |---|---|
-| **Know before you go:** parking and toilets within a short walk (a second map lookup, new), step-free access and dogs, each shown only when the map data says so, "Not listed" otherwise | A place with tags shows them; one without says Not listed once, not four times |
+| **Know before you go:** parking and toilets within a short walk (a second map lookup, new; how often the map has them is checked on real places before this is promised), step-free access and dogs, each shown only when the map data says so, "Not listed" otherwise | A place with tags shows them; one without says Not listed once, not four times |
 | **Filters** on Places: Parking, Toilets, Short walk (under 10 minutes). Confirmed places come first; if none match it says "None listed with parking and toilets here" and shows the nearest places with those marked "Not listed". | Mum's journey finds a place with parking and toilets in 2 taps, or is told plainly there is none listed |
 | **Dining** says "From open map data, not checked", shows hours when known, and the phone button says "Call" | No "Call to book" anywhere |
 | **What to bring** on the plan, with a warm layer when the evening turns cold | Cold evening lists a layer |
 | **Picture card** of the plan (place, time, be there by, tonight's sky) for any chat; no sign-up, no reply needed | Card sends to Messages and WhatsApp |
 | **Send update:** change a shared plan and re-send the card with "Changed: now 5:05" on top | Friends' journey: time changed and re-sent in 3 taps |
 | **The week at a glance:** next evenings, one line each, best one marked, shareable as a picture | Sent in 2 taps |
-| **Decide-by** for a chosen evening: "Decide by 1:10 pm; forecast last changed 11:10", with wind shown. Decide-by is three hours before be there by. | Reads correctly for tonight and tomorrow |
+| **Decide-by** for a chosen evening: "Decide by 1:10 pm; forecast last changed 11:10", with wind shown. Decide-by is three hours before be there by: a starting rule, yours to change. | Reads correctly for tonight and tomorrow |
 
 ## Release C: a chosen date and venue (medium)
 
