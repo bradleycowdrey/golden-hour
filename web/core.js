@@ -370,13 +370,23 @@
   /** times: eveningTimes(); o: {walkIn, travel, buffer, closing (ms or null)}. */
   function planTimes(times, o) {
     if (!times || times.state === 'none') return null;
-    const meetAt = times.bestStart - 20 * MIN;
+    const meetAt = o.meetAt != null ? o.meetAt : times.bestStart - 20 * MIN;
     const twilight = times.state === 'twilight';
     const stayUntil = twilight ? times.sunset + 45 * MIN : times.afterglowEnd;
     let headBackBy = twilight ? times.sunset + 90 * MIN : times.lastLight;
     if (o.closing != null) headBackBy = Math.min(headBackBy, o.closing - 15 * MIN);
     return { leaveBy: meetAt - ((o.walkIn || 0) + (o.travel || 0) + (o.buffer || 0)) * MIN, meetAt, sunset: times.sunset, stayUntil, headBackBy };
   }
+  /** When to start walking back so the walk is done by last light: head-back-by is last light itself. */
+  const startBackBy = (pt, walkIn) => pt.headBackBy - (walkIn || 0) * MIN;
+  /** The windows a photographer plans around: golden hour (sun 6 degrees up to 4 below) and blue hour (4 to 6 below). */
+  function lightWindows(times) {
+    if (!times || times.state === 'none') return null;
+    return { golden: [times.goldenStart, times.afterglowEnd != null ? times.afterglowEnd : times.sunset + 30 * MIN],
+      blue: times.afterglowEnd != null && times.lastLight != null ? [times.afterglowEnd, times.lastLight] : null };
+  }
+  /** The answer in words: go, maybe or not, from the score. The same thresholds as the verdict. */
+  const answerOf = (score) => (score >= 3.5 ? 'go' : score >= 2.5 ? 'maybe' : 'no');
 
   // ---------- What to bring (section 6.2) ----------
   /** x: inputsAt(); p: rate().detail; o: {spotType, walkIn, who, times: planTimes(), imperialFirst}.
@@ -515,6 +525,8 @@
     const body = { v: SHARE_VERSION, n: cut(plan.spot.name, 60), la: Math.round(plan.spot.lat * 1e5) / 1e5, lo: Math.round(plan.spot.lon * 1e5) / 1e5,
       ty: plan.spot.type || 'outdoor', d: plan.date, tz: plan.tz || '', m: mins(t.meetAt), s: mins(t.sunset), u: mins(t.stayUntil), h: mins(t.headBackBy),
       w: plan.walkIn || 0, sc: plan.scoreAtSave == null ? null : plan.scoreAtSave, at: mins(plan.sharedAt || Date.now()), i: items };
+    if (plan.note) body.nt = cut(plan.note, 200);
+    if (plan.changed) body.ch = cut(plan.changed, 60);
     return toBase64Url(new TextEncoder().encode(JSON.stringify(body)));
   }
   /** The plan in a link, or null when the link is incomplete, damaged, or from a newer version. Every string in
@@ -531,7 +543,8 @@
       return { shared: true, spot: { name: cut(o.n, 60), lat: o.la, lon: o.lo, type: ['outdoor', 'water', 'peak', 'venue'].includes(o.ty) ? o.ty : 'outdoor' },
         date: o.d, tz: typeof o.tz === 'string' ? cut(o.tz, 40) : '', walkIn: num(o.w) ? Math.max(0, Math.min(600, o.w)) : 0,
         times: { meetAt: o.m * MIN, sunset: o.s * MIN, stayUntil: o.u * MIN, headBackBy: o.h * MIN },
-        scoreAtSave: num(o.sc) ? o.sc : null, sharedAt: num(o.at) ? o.at * MIN : null, items };
+        scoreAtSave: num(o.sc) ? o.sc : null, sharedAt: num(o.at) ? o.at * MIN : null, items,
+        note: typeof o.nt === 'string' ? cut(o.nt, 200) : '', changed: typeof o.ch === 'string' ? cut(o.ch, 60) : '' };
     } catch { return null; }
   }
 
@@ -551,6 +564,24 @@
       `)->.food;.easy out center tags 150;.adv out center tags 150;.food out center tags 150;`;
   }
   const SPOT_CAT = { easy: 'Landmark', adventurous: 'Adventurous', dining: 'Dining' };
+  /** One Overpass query for parking and toilets within 300 m of each of up to 40 places. */
+  function nearQuery(spots) {
+    const parts = spots.slice(0, 40).map((s) => `nwr(around:300,${s.lat.toFixed(5)},${s.lon.toFixed(5)})[amenity~"^(toilets|parking)$"];`);
+    return `[out:json][timeout:25];(${parts.join('')});out center tags 400;`;
+  }
+  /** For each place: whether the map lists parking and toilets within 300 m. → {id: {parking, toilets}} */
+  function matchNear(spots, elements) {
+    const pts = (elements || []).map((e) => ({ kind: e.tags && e.tags.amenity, lat: e.lat != null ? e.lat : e.center && e.center.lat, lon: e.lon != null ? e.lon : e.center && e.center.lon,
+      priv: e.tags && /^(private|no|customers)$/.test(e.tags.access || '') })).filter((e) => e.lat != null && (e.kind === 'parking' || e.kind === 'toilets') && !e.priv);
+    const out = {};
+    for (const s of spots.slice(0, 40)) {
+      const near = pts.filter((e) => distance(s.lat, s.lon, e.lat, e.lon) <= 320);
+      out[s.id] = { parking: near.some((e) => e.kind === 'parking'), toilets: near.some((e) => e.kind === 'toilets') };
+    }
+    return out;
+  }
+  /** A places answer worth keeping: Overpass reports trouble as a remark on a 200, and an empty list is as good as none. */
+  const placesAnswerOk = (body) => !!body && !body.remark && Array.isArray(body.elements) && body.elements.length > 0;
   /** Sorts open map data into the three kinds of Golden Hour Places, best first. "Best" means what open data can
       show: famous places (with a Wikipedia or Wikidata entry) and places named for the sunset first, then the kind
       of place, then the nearest. o: {lat, lon, elevation (m, of the location), facing (sunset azimuth)} */
@@ -652,7 +683,7 @@
       'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Bradley Cowdrey//Golden Hour//EN', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH',
       'BEGIN:VEVENT', `UID:${icsText(o.id)}@goldenhour`, `DTSTAMP:${icsTime(o.now)}`, `DTSTART:${icsTime(o.start)}`, `DTEND:${icsTime(o.end)}`,
       `SUMMARY:${icsText(o.title)}`, `LOCATION:${icsText(o.location)}`, `DESCRIPTION:${icsText(o.description)}`,
-      'BEGIN:VALARM', 'ACTION:DISPLAY', `DESCRIPTION:${icsText(o.title)}`, 'TRIGGER:-PT90M', 'END:VALARM',
+      'BEGIN:VALARM', 'ACTION:DISPLAY', `DESCRIPTION:${icsText(o.title)}`, `TRIGGER:-PT${Math.max(0, Math.round(o.alarm == null ? 30 : o.alarm))}M`, 'END:VALARM',
       'END:VEVENT', 'END:VCALENDAR',
     ];
     return lines.map(fold).join('\r\n') + '\r\n';
@@ -690,7 +721,7 @@
     solarNoonGuess, eveningTimes, bracket, interp, larger, both, inputsAt, normals, dayOfYear, eveningNormal,
     WEIGHTS, COLOUR_CLASSES, colourClass, feltWind, parts, capReason, tierOf, verdictOf, rate, reason,
     tempText, windText, distanceText, prefersImperial, cToF,
-    travelMinutes, bufferMinutes, planTimes, bringList, mergeItems, moonAt, moonEvening, moonDistance, nextPhase, SYNODIC,
+    travelMinutes, bufferMinutes, planTimes, startBackBy, lightWindows, answerOf, nearQuery, matchNear, placesAnswerOk, bringList, mergeItems, moonAt, moonEvening, moonDistance, nextPhase, SYNODIC,
     toBase64Url, fromBase64Url, encodePlan, decodePlan, spotsQuery, rankSpots, spotReason, encodeSpot, decodeSpot, SPOT_CAT, MAX_LINK, ics, fold, sampleForecast,
   };
   if (typeof module === 'object' && module.exports) module.exports = api; else root.GH = api;

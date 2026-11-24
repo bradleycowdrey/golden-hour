@@ -281,7 +281,7 @@ test('calendar file', () => {
   assert.ok(lines.includes('DTSTART:20260622T010500Z'));
   assert.ok(lines.includes('DTEND:20260622T031000Z'));
   assert.ok(lines.includes('SUMMARY:Sunset at Lookout Mountain\\; west side\\, upper lot'));
-  assert.ok(lines.includes('TRIGGER:-PT90M') && lines.includes('ACTION:DISPLAY'));
+  assert.ok(lines.includes('TRIGGER:-PT30M') && lines.includes('ACTION:DISPLAY'));
   assert.ok(lines.every((l) => new TextEncoder().encode(l).length <= 75), 'no line over 75 octets');
   const unfolded = text.replace(/\r\n /g, '');
   assert.ok(unfolded.includes('DESCRIPTION:Meet at 7:59 pm\\nBring: coat\\, blanket\\\\chairs\\nhttps://'), 'backslashes first, then commas and newlines');
@@ -315,4 +315,68 @@ test('the sample forecast rates like any other', () => {
   const times = G.eveningTimes(G.solarNoonGuess(2026, 6, 21, -104.99), 39.739, -104.99);
   const r = G.rate(G.inputsAt(s.p0, s.up, s.aq, times.sunset), { day: 0, normal: null });
   assert.ok(r.score >= 0 && r.score <= 5 && r.reason.length <= 90);
+});
+
+test('getting home: start back by is last light minus the walk', () => {
+  const t = G.eveningTimes(G.solarNoonGuess(2026, 11, 24, -104.99), 39.74, -104.99);
+  const pt = G.planTimes(t, { walkIn: 10, travel: 20, buffer: 10 });
+  assert.equal(pt.headBackBy, t.lastLight);
+  assert.equal(G.startBackBy(pt, 10), t.lastLight - 10 * 60000);
+  assert.equal(G.startBackBy(pt, 0), t.lastLight);
+});
+
+test('plan times: an arrive-by the planner sets moves leave-by with it', () => {
+  const t = G.eveningTimes(G.solarNoonGuess(2026, 6, 20, -104.99), 39.74, -104.99);
+  const a = G.planTimes(t, { walkIn: 5, travel: 20, buffer: 10 });
+  const b = G.planTimes(t, { walkIn: 5, travel: 20, buffer: 10, meetAt: a.meetAt - 30 * 60000 });
+  assert.equal(a.meetAt, t.bestStart - 20 * 60000);
+  assert.equal(b.leaveBy, a.leaveBy - 30 * 60000);
+});
+
+test('golden hour and blue hour windows', () => {
+  const t = G.eveningTimes(G.solarNoonGuess(2026, 6, 20, -104.99), 39.74, -104.99);
+  const w = G.lightWindows(t);
+  assert.deepEqual(w.golden, [t.goldenStart, t.afterglowEnd]);
+  assert.deepEqual(w.blue, [t.afterglowEnd, t.lastLight]);
+  assert.ok(w.golden[0] < t.sunset && t.sunset < w.golden[1] && w.blue[1] > w.blue[0]);
+});
+
+test('the answer follows the score: go from 3.5, maybe from 2.5', () => {
+  assert.deepEqual([3.5, 3.49, 2.5, 2.49, 0].map(G.answerOf), ['go', 'maybe', 'maybe', 'no', 'no']);
+});
+
+test('calendar reminder is 30 minutes before, or what is asked', () => {
+  const base = { id: 'x', now: 0, start: 3600000, end: 7200000, title: 'T', location: 'L', description: 'D' };
+  assert.match(G.ics(base), /TRIGGER:-PT30M/);
+  assert.match(G.ics({ ...base, alarm: 45 }), /TRIGGER:-PT45M/);
+});
+
+test('share link carries the note and a "changed" line; old links still read', () => {
+  const plan = { spot: { name: 'Pier', lat: 1, lon: 2, type: 'water' }, date: '2026-06-20', tz: 'UTC', walkIn: 5, items: [],
+    times: { meetAt: 60000 * 100, sunset: 60000 * 130, stayUntil: 60000 * 150, headBackBy: 60000 * 160 }, scoreAtSave: 4.1, sharedAt: 60000 * 10 };
+  const plain = G.decodePlan(G.encodePlan(plan));
+  assert.equal(plain.note, ''); assert.equal(plain.changed, '');
+  const d = G.decodePlan(G.encodePlan({ ...plan, note: 'Park in car park B', changed: 'now 5:05 pm' }));
+  assert.equal(d.note, 'Park in car park B'); assert.equal(d.changed, 'now 5:05 pm');
+});
+
+test('parking and toilets: matched to places within 300 m, private ones ignored', () => {
+  const spots = [{ id: 'a', lat: 39.75, lon: -105.0 }, { id: 'b', lat: 39.80, lon: -105.1 }, { id: 'c', lat: 39.9, lon: -105.2 }];
+  const q = G.nearQuery(spots);
+  assert.equal((q.match(/around:300/g) || []).length, 3);
+  const els = [
+    { type: 'node', lat: 39.7505, lon: -105.0005, tags: { amenity: 'parking' } },
+    { type: 'way', center: { lat: 39.7502, lon: -105.0 }, tags: { amenity: 'toilets' } },
+    { type: 'node', lat: 39.8001, lon: -105.1001, tags: { amenity: 'parking', access: 'private' } },
+    { type: 'node', lat: 39.8002, lon: -105.1, tags: { amenity: 'toilets' } },
+  ];
+  assert.deepEqual(G.matchNear(spots, els), { a: { parking: true, toilets: true }, b: { parking: false, toilets: true }, c: { parking: false, toilets: false } });
+});
+
+test('a places answer with a remark, or nothing in it, is not a good answer', () => {
+  assert.equal(G.placesAnswerOk({ elements: [{ id: 1 }] }), true);
+  assert.equal(G.placesAnswerOk({ elements: [] }), false);
+  assert.equal(G.placesAnswerOk({ remark: 'runtime error: Query timed out', elements: [] }), false);
+  assert.equal(G.placesAnswerOk({ remark: 'runtime error', elements: [{ id: 1 }] }), false);
+  assert.equal(G.placesAnswerOk(null), false);
 });
