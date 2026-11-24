@@ -1,0 +1,24 @@
+name: TestFlight testers
+
+# Says where the newest iPhone builds stand in App Store Connect, and makes sure the account holder and
+# admins can install them from TestFlight (an internal group that gets every build). Safe to run again.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  testers:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check builds and testers
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet "pyjwt[crypto]==2.9.0"
+          cd scripts && "$RUNNER_TEMP/venv/bin/python" appstore_testflight.py
