@@ -247,6 +247,9 @@ const server = http.createServer((req, res) => {
     const strip = await text(page, CUR + '.times');
     const fmt = (ms) => new Intl.DateTimeFormat('en-US', { timeZone: 'America/Denver', hour: 'numeric', minute: '2-digit' }).format(ms).replace(/ /g, ' ').toLowerCase();
     check(['goldenStart', 'bestStart', 'sunset', 'afterglowEnd', 'lastLight'].every((k) => strip.includes(fmt(exp.times[k]))), 'the five times match the sun’s position to the minute');
+    check(await page.locator(CUR + '.dt').count() === 0 && await page.locator(CUR + '[data-act="details-toggle"]').getAttribute('aria-expanded') === 'false', 'the tiles behind the score start folded away');
+    await page.locator(CUR + '[data-act="details-toggle"]').click();
+    check(await page.locator(CUR + '[data-act="details-toggle"]').getAttribute('aria-expanded') === 'true' && await page.evaluate(() => localStorage.getItem('gh.details')) === 'true', 'one tap shows them, and the choice is remembered');
     const tiles = (await page.locator(CUR + '.dt .eyebrow > span:first-of-type').allInnerTexts()).map((t) => t.trim());
     check(['COLOUR', 'CLOUD COVER', 'TOWARD THE SUNSET', 'AIR CLARITY', 'VISIBILITY', 'WIND', 'FEELS LIKE', 'RAIN', 'HUMIDITY', 'MOON', 'AT SUNSET', 'MOONRISE', 'MOONSET', 'MOONLIGHT', 'DISTANCE'].every((n) => tiles.includes(n)) && tiles.length === 15, `every input to the score has its own tile (${tiles.length})`);
     const tileText = (name) => page.locator(CUR + `.dt[aria-label="${name}"]`).innerText();

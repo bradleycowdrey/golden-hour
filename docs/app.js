@@ -4,7 +4,7 @@
 (function () {
   'use strict';
   const G = window.GH;
-  const VERSION = '0.9.4';
+  const VERSION = '0.9.5';
   const MIN = 60000, HOUR = 3600000, DAY = 86400000;
   const $ = (sel, el) => (el || document).querySelector(sel);
   const $$ = (sel, el) => Array.from((el || document).querySelectorAll(sel));
@@ -765,6 +765,17 @@
     return '';
   }
 
+  /** The tiles behind the score, folded away until asked for: the page leads with the rating, where to go
+      and the evening. The choice is remembered. */
+  function detailFold(ev, p) {
+    const tiles = tilesHtml(ev, p);
+    if (!tiles) return '';
+    const open = store.get('details', false);
+    return `<section class="fold"><button type="button" class="foldrow" data-act="details-toggle" aria-expanded="${open}">
+        <span class="ft"><b>What’s behind the score</b><small>Colour, cloud, air, wind, comfort and the moon</small></span>
+        <span class="fa">${open ? 'Hide' : 'Show'}</span><span class="chev${open ? ' up' : ''}">${SP.chev}</span></button></section>${open ? tiles : ''}`;
+  }
+
   // ---------- A day's detail: a sheet over the location's page, as in Two Degrees ----------
   const sheetDays = (evs) => evs.map((e, i) => (e.rating ? i : -1)).filter((i) => i >= 0);
   function sheetHtml() {
@@ -834,7 +845,7 @@
     const best = bestOf(evs);
     const week = `<section class="card daily"><p class="eyebrow">${TI.cal}<span>The evenings ahead</span><span class="sp"></span><span class="aside">Colour</span></p><div class="days">${evs.filter((e) => e.rating || e.times.state === 'none' || e.day <= 5).map((e) => dayRow(e, p, evs, best, ev)).join('')}${(() => { const later = evs.find((e) => !e.rating && e.day > 5); return later ? `<div class="day later"><span class="why">${esc(dayName(later.date, true))}, ${esc(dateText(later.date))} and beyond: too early to call</span></div>` : ''; })()}</div>
       <p class="small muted" data-gap>The bar is the colour score. Tap an evening for its detail. Days three to five are an outlook and may change.</p></section>`;
-    return `${back}<div class="two"><div class="col">${hero}${warns}${ev.times.state === 'none' ? '' : placesStrip(p)}${cta}${sample}</div><div class="col">${howWasIt(p, evs)}${ev.times.state === 'none' ? '' : eveningCard(ev, p)}${week}</div></div>${tilesHtml(ev, p)}${placesSection(p)}${footHtml()}`;
+    return `${back}<div class="two"><div class="col">${hero}${warns}${ev.times.state === 'none' ? '' : placesStrip(p)}${cta}${sample}</div><div class="col">${howWasIt(p, evs)}${ev.times.state === 'none' ? '' : eveningCard(ev, p)}${week}</div></div>${detailFold(ev, p)}${placesSection(p)}${footHtml()}`;
   }
   const compass = (deg) => ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'][Math.round(G.normalize(deg) / 45) % 8];
 
@@ -1615,6 +1626,7 @@
     async retry() { const p = place(); DATA[p.id].error = null; update(p); await load(p, true); update(p); },
     day(el) { if (el.dataset.day === '') return; S.sheet = { placeId: place().id, day: Number(el.dataset.day) }; drawSheet(true); },
     cell(el) { goTo(el.dataset.id); S.sheet = { placeId: el.dataset.id, day: Number(el.dataset.day) }; drawSheet(true); },
+    'details-toggle'() { store.set('details', !store.get('details', false)); S.places.forEach(update); },
     'sheet-close'() { S.sheet = null; drawSheet(); },
     'sheet-step'(el) { stepSheet(Number(el.dataset.d)); },
     compare() { settings.compare = !settings.compare; store.set('compare', settings.compare); render(); if (settings.compare) loadAll(); },
