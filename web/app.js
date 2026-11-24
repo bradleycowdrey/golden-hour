@@ -82,10 +82,21 @@
   const dist = (km) => two(G.distanceText(km, settings.imperialFirst));
 
   // ---------- State ----------
-  const S = { places: [], current: null, dayBy: {}, sheet: null, view: null, plans: [], ratings: [], spots: [], results: null, notice: null, editing: false };
-  const DATA = {};   // placeId → {fc, source: 'live' | 'cache' | 'sample', fetchedAt, error, ceiling, prev: {date → {score, at}}, snaps: {date → snap}}
+  // view: the screen under the bar (null = Today's pager, or plans, plan, list, spots, addspot, shared).
+  // sheet: what is open over it (a day, a place, settings, the place picker for a new plan).
+  const S = { places: [], current: null, sheet: null, view: null, plans: [], ratings: [], spots: [], results: null, notice: null, editing: false, filters: {} };
+  const DATA = {};   // placeId → {fc, source: 'live' | 'cache' | 'sample', fetchedAt, error, ceiling, spots, near, prev: {date → {score, at}}, snaps: {date → snap}}
   const SAMPLE = { id: 'sample', name: 'Denver', region: 'Colorado', lat: 39.7392, lon: -104.9903, tz: 'America/Denver', sample: true };
   const place = (id) => S.places.find((p) => p.id === (id || S.current)) || S.places[0];
+
+  // ---------- Status: what the app last asked for and what came back (Settings, Status) ----------
+  const STATUS = store.get('status', []);
+  function note(what, ok, detail, t0) {
+    STATUS.unshift({ what, ok: !!ok, detail: String(detail || '').slice(0, 140), at: now(), ms: t0 ? now() - t0 : null });
+    STATUS.length = Math.min(STATUS.length, 30);
+    store.set('status', STATUS);
+  }
+  const why = (e) => (e && e.name === 'TimeoutError' ? 'timed out' : e && e.name === 'AbortError' ? 'timed out' : !navigator.onLine ? 'offline' : (e && e.message) || 'failed');
 
   // ---------- The request budget (11.3): about 6 call-weights a place a refresh, 300 a day ----------
   const CEILING = 300;
@@ -98,13 +109,14 @@
 
   /** A JSON response, from the app's cache when it's fresh enough, otherwise from the network; if the
       network fails, the cached copy whatever its age. → {body, fetchedAt, stale?, ceiling?} */
-  async function getJSON(url, ttl, weight, counts) {
+  async function getJSON(url, ttl, weight, counts, what) {
     const hit = await db.get('cache', url);
     if (hit && now() - hit.fetchedAt < ttl) return { body: hit.body, fetchedAt: hit.fetchedAt };
     if (counts !== false && budget(0) + weight > CEILING) {
       if (hit) return { body: hit.body, fetchedAt: hit.fetchedAt, stale: true, ceiling: true };
       const e = new Error('ceiling'); e.ceiling = true; throw e;
     }
+    const t0 = now();
     try {
       const r = await fetch(url, { signal: AbortSignal.timeout(15000) });
       if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -112,11 +124,41 @@
       if (counts !== false) budget(weight);
       const rec = { url, body, fetchedAt: now() };
       db.put('cache', rec);
+      if (what) note(what, true, 'OK', t0);
       return rec;
     } catch (e) {
+      if (what) note(what, false, why(e) + (hit ? ', showing the saved copy' : ''), t0);
       if (hit) return { body: hit.body, fetchedAt: hit.fetchedAt, stale: true };
       throw e;
     }
+  }
+
+  /** A question for the open map (Overpass). One 45-second budget across both sources; an answer marked as an
+      error, or (unless allowed) with nothing in it, counts as a failure and is never kept. */
+  const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.private.coffee/api/interpreter'];
+  const PLACES_BUDGET = 45000;
+  async function overpass(q, what, ttl, allowEmpty) {
+    const key = 'overpass:' + q;
+    const hit = await db.get('cache', key);
+    if (hit && now() - hit.fetchedAt < ttl) return hit.body;
+    const t0 = now(), deadline = t0 + PLACES_BUDGET;
+    let last = 'no answer';
+    for (let i = 0; i < OVERPASS.length; i++) {
+      const left = deadline - now();
+      if (left < 2000) break;
+      try {
+        const r = await fetch(`${OVERPASS[i]}?data=${encodeURIComponent(q)}`, { signal: AbortSignal.timeout(i === 0 ? Math.min(left, 30000) : left) });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const body = await r.json();
+        if (body && body.remark) throw new Error('the map service reported a problem');
+        if (!body || !Array.isArray(body.elements) || (!allowEmpty && !body.elements.length)) throw new Error('nothing in the answer');
+        db.put('cache', { url: key, body, fetchedAt: now() });
+        note(what, true, `${body.elements.length} found`, t0);
+        return body;
+      } catch (e) { last = why(e); }
+    }
+    note(what, false, last, t0);
+    throw new Error(last);
   }
 
   const r2 = (v) => (Math.round(v * 100) / 100).toFixed(2);
@@ -134,8 +176,8 @@
     const p0Url = `${f}?latitude=${r2(lat)}&longitude=${r2(lon)}&hourly=${HOURLY_P0}${COMMON}`;
     const upUrl = `${f}?latitude=${pts.map((p) => r2(p.lat)).join(',')}&longitude=${pts.map((p) => r2(p.lon)).join(',')}&hourly=cloud_cover_low,cloud_cover_mid,cloud_cover_high${COMMON}`;
     const aqUrl = `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${r2(lat)}&longitude=${r2(lon)}&hourly=aerosol_optical_depth,pm2_5,us_aqi&forecast_days=7&timeformat=unixtime&timezone=GMT`;
-    const [a, b] = await Promise.all([getJSON(p0Url, 30 * MIN, 1), getJSON(upUrl, 30 * MIN, 4)]);
-    const c = await getJSON(aqUrl, HOUR, 1).catch(() => null);
+    const [a, b] = await Promise.all([getJSON(p0Url, 30 * MIN, 1, true, 'Forecast'), getJSON(upUrl, 30 * MIN, 4, true, 'Forecast toward the sunset')]);
+    const c = await getJSON(aqUrl, HOUR, 1, true, 'Air quality').catch(() => null);
     const upList = Array.isArray(b.body) ? b.body : [b.body];
     return { elevation: a.body.elevation, fc: { p0: hourly(a.body.hourly), up: upList.map((u) => hourly(u.hourly)), aq: c && c.body && c.body.hourly ? hourly(c.body.hourly) : null },
       fetchedAt: Math.min(a.fetchedAt, b.fetchedAt), stale: !!(a.stale || b.stale), ceiling: !!(a.ceiling || b.ceiling) };
@@ -158,57 +200,93 @@
   }
 
   // ---------- Evenings ----------
+  /** One evening at a place: its times (exact for any date) and, within five days when a forecast covers it, its rating.
+      opts: {fc, normal, spotType, at: {lat, lon}} to rate somewhere other than the place itself. */
+  function eveningOn(p, date, opts) {
+    const o = opts || {}, d = DATA[p.id], fc = o.fc !== undefined ? o.fc : d && d.fc, at = o.at || p;
+    const today = localDate(now(), p.tz), [y, m, dd] = ymd(date);
+    const day = Math.round((Date.UTC(y, m, dd) - Date.UTC(...ymd(today))) / DAY);
+    const times = G.eveningTimes(G.solarNoonGuess(y, m + 1, dd, at.lon), at.lat, at.lon);
+    let rating = null, x = null;
+    if (day >= 0 && day <= 5 && fc && times.state !== 'none') {
+      x = G.inputsAt(fc.p0, fc.up, fc.aq, times.sunset);
+      if (x) rating = G.rate(x, { day, normal: o.normal !== undefined ? o.normal : G.eveningNormal(p.normals, date), imperialFirst: settings.imperialFirst, spotType: o.spotType });
+    }
+    return { date, day, times, rating, x };
+  }
   /** Ten evenings from today, in the place's own calendar; the first six rated when the forecast covers them. */
   function evenings(p, opts) {
-    const d = DATA[p.id], fc = d && d.fc, today = localDate(now(), p.tz), out = [];
-    for (let i = 0; i < 10; i++) {
-      const date = addDays(today, i), [y, m, dd] = ymd(date);
-      const times = G.eveningTimes(G.solarNoonGuess(y, m + 1, dd, p.lon), p.lat, p.lon);
-      let rating = null, x = null;
-      if (i <= 5 && fc && times.state !== 'none') {
-        x = G.inputsAt(fc.p0, fc.up, fc.aq, times.sunset);
-        if (x) rating = G.rate(x, { day: i, normal: G.eveningNormal(p.normals, date), imperialFirst: settings.imperialFirst, spotType: opts && opts.spotType });
-      }
-      out.push({ date, day: i, times, rating, x });
-    }
+    const today = localDate(now(), p.tz), out = [];
+    for (let i = 0; i < 10; i++) out.push(eveningOn(p, addDays(today, i), opts));
     return out;
   }
   /** When an evening is over: last light, or local midnight when twilight lasts all night. */
   const endOf = (ev, p) => (ev.times.state === 'ok' ? ev.times.lastLight : startOfDay(addDays(ev.date, 1), p.tz));
   /** Which evening "Tonight" shows: today's until it is over, then tomorrow's. */
   function focusDay(p, evs) { return now() > endOf(evs[0], p) ? 1 : 0; }
-  /** The best evening: the highest-scoring Go among tonight and the next two; an outlook evening only when
-      it is still a Go at the bottom of its range. */
-  function bestOf(evs) {
-    let best = null;
-    for (const e of evs) if (e.rating && e.rating.tier !== 'outlook' && e.rating.verdict === 'go' && now() < e.times.sunset && (!best || e.rating.score > best.rating.score)) best = e;
-    if (best) return { ev: best, label: 'Best evening' };
-    for (const e of evs) if (e.rating && e.rating.tier === 'outlook' && e.rating.lo >= 3.5 && (!best || e.rating.score > best.rating.score)) best = e;
-    return best ? { ev: best, label: 'Likely best' } : null;
+  /** The next evening after this one worth going out for: the first Go, else the first Maybe. */
+  function nextGood(evs, after) {
+    const later = evs.filter((e) => e.day > after.day && e.rating);
+    return later.find((e) => e.rating.verdict === 'go') || later.find((e) => e.rating.verdict === 'maybe') || null;
   }
 
   async function load(p, force) {
     const d = DATA[p.id] || (DATA[p.id] = { prev: {}, snaps: {} });
     if (p.sample) {
       const start = startOfDay(addDays(localDate(now(), p.tz), -1), p.tz);
-      Object.assign(d, { fc: G.sampleForecast(start, 9 * 24), source: 'sample', fetchedAt: now(), error: null, spots: finishSample(p) });
+      Object.assign(d, { fc: G.sampleForecast(start, 9 * 24), source: 'sample', fetchedAt: now(), error: null, spots: finishSample(p), near: sampleNear() });
       return;
     }
+    // Places never wait on the forecast: they load beside it, and a failed lookup is tried again, at most every two minutes.
+    if ((!d.spots || d.spots === 'error') && !d.spotsLoading && now() - (d.spotsTriedAt || 0) > 2 * MIN) loadSpots(p).then(() => update(p));
     if (d.loading) return d.loading;
-    if (!force && d.fc && now() - d.fetchedAt < 30 * MIN) return;
+    if (!force && d.fc && !d.error && now() - d.fetchedAt < 30 * MIN) return;
     d.loading = (async () => {
       try {
         const r = await fetchForecast(p.lat, p.lon);
         const first = d.fetchedAt !== r.fetchedAt;
-        Object.assign(d, { fc: r.fc, source: r.stale ? 'cache' : 'live', fetchedAt: r.fetchedAt, error: null, ceiling: r.ceiling, elevation: r.elevation });
+        Object.assign(d, { fc: r.fc, source: r.stale ? 'cache' : 'live', fetchedAt: r.fetchedAt, error: r.stale && !r.ceiling ? 'stale' : null, ceiling: r.ceiling, elevation: r.elevation });
         if (first) await remember(p);
+        if (d.spotsRaw) rankInto(p);   // effort needs the height of the place, which comes with the forecast
       } catch (e) {
         d.error = e && e.ceiling ? 'ceiling' : 'network';
       } finally { d.loading = null; }
     })();
     await d.loading;
-    fetchNormals(p);
-    if (d.fc && !d.spots && !d.spotsLoading) loadSpots(p).then(() => update(p));
+    fetchNormals(p); fixZone(p);
+  }
+
+  /** A place added offline gets a rough zone from its longitude; the real one, with summer time, once online. */
+  async function fixZone(p) {
+    if (!p.tzRough || p.sample || p.zoneAsked) return;
+    p.zoneAsked = true;
+    try {
+      const r = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${r2(p.lat)}&longitude=${r2(p.lon)}&daily=sunset&forecast_days=1&timezone=auto`, { signal: AbortSignal.timeout(8000) });
+      if (!r.ok) return;
+      const tz = (await r.json()).timezone;
+      if (validTz(tz) && tz !== 'GMT') { p.tz = tz; delete p.tzRough; delete p.zoneAsked; await db.put('places', p); update(p); }
+    } catch { /* tried again next time the app opens */ }
+  }
+
+  // ---------- The forecast at a venue: a plan is rated where it happens, the same for whoever opens it ----------
+  const VENUE = {};   // "lat,lon" → {fc, fetchedAt, loading, triedAt}
+  const venueKey = (s) => `${r2(s.lat)},${r2(s.lon)}`;
+  function venueFc(p, spot) {
+    const own = p && DATA[p.id] ? DATA[p.id].fc : null;
+    if (!spot || spot.lat == null || (p && p.sample)) return own;
+    const k = venueKey(spot), v = VENUE[k] || (VENUE[k] = {});
+    if (!v.loading && (!v.fc || now() - v.fetchedAt > 30 * MIN) && now() - (v.triedAt || 0) > 2 * MIN) {
+      v.triedAt = now();
+      v.loading = fetchForecast(spot.lat, spot.lon).then((r) => { v.fc = r.fc; v.fetchedAt = r.fetchedAt; }).catch(() => { /* the location's forecast stands in */ })
+        .finally(() => { v.loading = null; if (S.view && (S.view.type === 'plan' || S.view.type === 'plans')) { keepFields(); render(); } });
+    }
+    return v.fc || own;
+  }
+  /** The rating of an evening at a venue. No "usual temperature" is used, so everyone sees the same number. */
+  function venueEvening(p, spot, date) {
+    const at = spot && spot.lat != null ? spot : p;
+    const base = p || { id: '-', lat: at.lat, lon: at.lon, tz: deviceTz() };
+    return eveningOn(base, date, { fc: venueFc(p, spot), normal: null, spotType: spot && spot.type, at });
   }
 
   /** Keeps what each evening scored: the forecast log "How was it?" compares against, the first reading of
@@ -353,7 +431,7 @@
     setTimeout(() => { while (sky.children.length > 1 && sky.firstChild !== layer) sky.removeChild(sky.firstChild); }, 900);
   }
   /** The evening a place's page is showing, and its sky. */
-  function shownEvening(p) { const evs = evenings(p), f = focusDay(p, evs); return evs[S.dayBy[p.id] == null ? f : S.dayBy[p.id]] || evs[f]; }
+  function shownEvening(p) { const evs = evenings(p); return evs[focusDay(p, evs)]; }
   function skyOf(p) { const ev = shownEvening(p); setSky(ev.rating, ev.x, p.id + ev.date); if (ev.rating) prepareCard(p); }
 
   function toast(text, action, onAction) {
@@ -366,8 +444,8 @@
   }
 
   // ---------- Drawing: the frame ----------
-  // After Two Degrees on the iPhone (and Apple's Weather): one full page per place, swiped between, each on
-  // its own evening's sky, with a bottom bar of plans, page dots and the list of places.
+  // Three places to be, always in the bar: Today (one full page per location, swiped between, each on its own
+  // evening's sky), Plans and Places. A day, a place and Settings open as sheets over whichever is showing.
   const scrolls = {};   // placeId → how far down its page is scrolled
   const screen = (html) => `<div class="screen"><div class="inner">${html}</div></div>`;
   function dyn(root) {
@@ -376,11 +454,7 @@
     for (const el of $$('[data-h]', root)) el.style.height = el.dataset.h + '%';
     for (const el of $$('[data-sky]', root)) { const [t, m, b] = el.dataset.sky.split(','); el.style.background = `linear-gradient(${t}, ${m} 60%, ${b})`; }
   }
-  /** The rating of the evening a place's page is showing. */
-  function shownRating(p) {
-    const evs = evenings(p), f = focusDay(p, evs), ev = evs[S.dayBy[p.id] == null ? f : S.dayBy[p.id]] || evs[f];
-    return ev.rating;
-  }
+  const viewKey = (v) => (!v ? 'today' : v.type + (v.draft && v.draft.id ? v.draft.id : '') + (v.placeId || ''));
   /** Draws the screen. Replacing a focused field can fire its change event mid-draw; that redraw waits its turn. */
   let drawing = false, drawAgain = false;
   function render() {
@@ -392,13 +466,12 @@
   function draw() {
     const v = $('#view'), view = S.view;
     for (const pg of $$('.page', v)) scrolls[pg.dataset.id] = pg.scrollTop;
+    const was = $('.screen', v), keep = was && was.dataset.key === viewKey(view) ? was.scrollTop : 0;
     if (view && view.type === 'shared') v.innerHTML = screen(sharedView());
     else if (view && view.type === 'plan') v.innerHTML = screen(planView());
-    else if (view && view.type === 'log') v.innerHTML = screen(logView());
     else if (view && view.type === 'plans') v.innerHTML = screen(plansView());
     else if (view && view.type === 'list') v.innerHTML = screen(listView());
     else if (view && view.type === 'spots') v.innerHTML = screen(spotsView());
-    else if (view && view.type === 'spot') v.innerHTML = screen(spotView());
     else if (view && view.type === 'addspot') v.innerHTML = screen(addSpotView());
     else {
       v.innerHTML = `<div class="pager" id="pager">${S.places.map((p) => `<section class="page" data-id="${esc(p.id)}" aria-label="${esc(p.name)}"><div class="inner">${pageHtml(p)}</div></section>`).join('')}</div>`;
@@ -409,27 +482,30 @@
       const p = place();
       if (p) skyOf(p);
     }
+    const sc = $('.screen', v);
+    if (sc) { sc.dataset.key = viewKey(view); sc.scrollTop = keep; }
     drawBar(); drawBanner(); dyn(v);
-    if (S.view) S.sheet = null;
     drawSheet();
     if (view && view.type === 'list') bindSearch();
-    if (view && (view.type === 'plan' || view.type === 'shared' || view.type === 'spot' || view.type === 'addspot')) mountMap();
+    if (view && view.type === 'plan') bindVenueSearch();
+    if (view && (view.type === 'plan' || view.type === 'shared' || view.type === 'addspot')) mountMap();
   }
   /** Redraws one place where it stands, so a forecast arriving never disturbs a swipe or what is being typed. */
   function update(p) {
     if (S.view && S.view.type === 'list') {
       const rows = $('#listRows');
-      if (rows) { rows.innerHTML = listRows(); const c = $('#compare'); if (c) c.innerHTML = compareHtml(); dyn($('#view')); }
+      if (rows) { rows.innerHTML = listRows(); dyn($('#view')); }
       return;
     }
-    if (S.view && S.view.type === 'spots' && S.view.placeId === p.id) return render();
+    if (S.view && S.view.type === 'spots' && S.view.placeId === p.id) { render(); return; }
+    if (S.view && S.view.type === 'plans') { render(); return; }
+    if (S.sheet && S.sheet.placeId === p.id && (S.sheet.kind === 'day' || S.sheet.kind === 'pick')) drawSheet();
     if (S.view) return;
     const pg = $$('.page').find((x) => x.dataset.id === p.id);
     if (!pg) return render();
     const top = pg.scrollTop;
     $('.inner', pg).innerHTML = pageHtml(p);
     dyn(pg); pg.scrollTop = top;
-    if (S.sheet && S.sheet.placeId === p.id) drawSheet();
     if (p.id === S.current) { skyOf(p); drawBanner(); }
   }
   /** A swipe has settled on (or is passing) another place: it becomes the current one. */
@@ -451,30 +527,61 @@
     const pager = !S.view && $('#pager'), i = S.places.findIndex((p) => p.id === id);
     if (i < 0) return;
     if (pager && smooth) return pager.scrollTo({ left: i * pager.clientWidth, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
-    S.view = null; S.current = id; store.set('current', id);
-    render();
+    S.current = id; store.set('current', id);
+    if (S.view || S.sheet) go(null); else render();
     const p = place();
     loadLogged(p).then(() => load(p)).then(() => update(p));
   }
 
+  // ---------- Going somewhere and coming back: every screen and sheet is a step Back undoes ----------
+  const NAV = [];
+  function pushStep() {
+    NAV.push({ view: S.view, sheet: S.sheet });
+    try { history.pushState({ d: NAV.length }, ''); } catch { /* no history in this frame */ }
+  }
+  /** Leaving a screen keeps what was typed on it. */
+  function leave() { keepFields(); autosave(); dropEmptyDraft(); }
+  function go(view) {
+    leave(); pushStep();
+    S.view = view; S.sheet = null; S.editing = false;
+    render();
+    const sc = $('.screen'); if (sc) sc.scrollTop = 0;
+  }
+  function openSheet(sheet) { pushStep(); S.sheet = sheet; drawSheet(true); }
+  function popTo(depth) {
+    let prev = null;
+    while (NAV.length > depth) prev = NAV.pop();
+    if (!prev) return;
+    leave();
+    S.view = prev.view; S.sheet = prev.sheet; S.editing = false;
+    render();
+  }
+  function back() {
+    if (NAV.length) { try { history.back(); return; } catch { popTo(NAV.length - 1); return; } }
+    if (S.sheet) { S.sheet = null; drawSheet(); return; }
+    if (S.view) { leave(); S.view = null; render(); }
+  }
+  window.addEventListener('popstate', (e) => popTo(e.state && typeof e.state.d === 'number' ? e.state.d : 0));
+
   const BAR = {
-    plans: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-6.500-5.400-6.500-10.500a6.500 6.500 0 0 1 13 0C18.500 15.600 12 21 12 21z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><circle cx="12" cy="10.500" r="2.300" fill="currentColor"/></svg>',
-    list: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 7h12M8 12h12M8 17h12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="4" cy="7" r="1.200" fill="currentColor"/><circle cx="4" cy="12" r="1.200" fill="currentColor"/><circle cx="4" cy="17" r="1.200" fill="currentColor"/></svg>',
+    today: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 18h18M6.500 18a5.500 5.500 0 0 1 11 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M12 5.500v2.500M5.200 9.200l1.800 1.800M18.800 9.200 17 11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
+    plans: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5.500" width="16" height="14.500" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M4 10h16M8.500 3.500v4M15.500 3.500v4M8.500 14.500l2.300 2.300 4.700-4.700" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    places: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-6.500-5.400-6.500-10.500a6.500 6.500 0 0 1 13 0C18.500 15.600 12 21 12 21z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><circle cx="12" cy="10.500" r="2.300" fill="currentColor"/></svg>',
     here: '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M11 1 1 5.200l4.300 1.500L6.800 11z" fill="currentColor"/></svg>',
+    gear: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 3v2.500M12 18.500V21M3 12h2.500M18.500 12H21M5.600 5.600l1.800 1.800M16.600 16.600l1.800 1.800M5.600 18.400l1.800-1.800M16.600 7.400l1.800-1.800" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
   };
-  /** Plans · page dots · the list of places, on a thin frosted bar. */
+  const tabOf = (v) => (!v || v.type === 'spots' || v.type === 'addspot' ? 'today' : v.type === 'plans' || v.type === 'plan' ? 'plans' : v.type === 'list' ? 'places' : '');
+  /** Today, Plans and Places, always there; over Today, a dot for each location and which one you are on. */
   function drawBar() {
     // Only the page showing can be reached by keyboard or read aloud.
     for (const pg of $$('.page')) { const on = pg.dataset.id === S.current; pg.toggleAttribute('inert', !on); if (on) pg.setAttribute('aria-current', 'true'); else pg.removeAttribute('aria-current'); }
-    const bar = $('#bar');
-    bar.hidden = !!S.view;
+    const bar = $('#bar'), tab = tabOf(S.view);
+    bar.hidden = !!(S.view && S.view.type === 'shared');
     if (bar.hidden) return;
-    const i = S.places.findIndex((p) => p.id === S.current);
-    const dots = S.places.length > 7 ? `<span class="count num">${i + 1} of ${S.places.length}</span>`
-      : S.places.map((p) => `<button type="button" class="dot" data-act="goto" data-id="${esc(p.id)}" aria-label="${esc(p.name)}"${p.id === S.current ? ' aria-current="true"' : ''}>${p.here ? BAR.here : '<i></i>'}</button>`).join('');
-    bar.innerHTML = `<button type="button" class="barbtn" data-act="open-plans">${BAR.plans}<span>Plans</span></button>
-      <div class="dots">${dots}</div>
-      <button type="button" class="barbtn" data-act="open-list">${BAR.list}<span>Locations</span></button>`;
+    const i = S.places.findIndex((p) => p.id === S.current), n = S.places.length;
+    const dots = S.view || n < 2 ? '' : `<div class="dotsrow">${n > 7 ? '' : S.places.map((p) => `<button type="button" class="dot" data-act="goto" data-id="${esc(p.id)}" aria-label="${esc(p.name)}"${p.id === S.current ? ' aria-current="true"' : ''}>${p.here ? BAR.here : '<i></i>'}</button>`).join('')}<span class="count num">${i + 1} of ${n}</span></div>`;
+    const btn = (key, act, label) => `<button type="button" class="barbtn" data-act="${act}"${tab === key ? ' aria-current="page"' : ''}>${BAR[key]}<span>${label}</span></button>`;
+    bar.innerHTML = `${dots}<div class="tabs">${btn('today', 'open-today', 'Today')}${btn('plans', 'open-plans', 'Plans')}${btn('places', 'open-list', 'Places')}</div>`;
   }
 
   function drawBanner() {
@@ -483,51 +590,44 @@
     if (S.notice) html = `<span>${esc(S.notice)}</span>`;
     else if (db.isBlocked()) html = '<span>Plans can’t be saved in this browser mode.</span>';
     else if (d && d.ceiling) html = '<span>Showing saved forecasts. Refreshing again tomorrow.</span>';
-    else if (d && d.source === 'cache' && !navigator.onLine) html = `<span>Offline. Forecast updated ${esc(ago(d.fetchedAt))}.</span>`;
-    el.hidden = !html || (S.view && S.view.type === 'shared');
+    else if (!navigator.onLine) html = `<span>Offline.${d && d.fc && d.source !== 'sample' ? ` Forecast updated ${esc(ago(d.fetchedAt))}.` : ''}</span>`;
+    el.hidden = !html || !!(S.view && S.view.type === 'shared');
     el.innerHTML = html;
   }
 
   const unitsSeg = () => `<div class="seg" role="group" aria-label="Which units are listed first"><button type="button" data-act="units" data-v="imperial" aria-pressed="${settings.imperialFirst}">°F · mi</button><button type="button" data-act="units" data-v="metric" aria-pressed="${!settings.imperialFirst}">°C · km</button></div>`;
-  function footHtml() {
-    return `<footer class="foot card"><p>Golden Hour has no accounts and collects nothing. To get forecasts and places, your device sends coordinates to Open-Meteo and the map tile host. Ratings are a forecast, not a promise: the first two days are the most reliable.</p>
-      <p>Weather by <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> (CC BY 4.0), air quality from CAMS. Maps: <a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a>, © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>. Places from <a href="https://www.geonames.org" target="_blank" rel="noopener">GeoNames</a> (CC BY 4.0). Sun and moon after SunCalc.</p>
-      <p><button type="button" class="btn quiet" data-act="log">My sunset log</button> · <a href="https://github.com/bradleycowdrey/golden-hour" target="_blank" rel="noopener">Source</a> · <a href="https://bradcowdrey.com/legal" target="_blank" rel="noopener">Terms and privacy</a> · Free and open source, by <a href="https://bradcowdrey.com" target="_blank" rel="noopener">Bradley Cowdrey</a> · ${esc(VERSION)}</p></footer>`;
-  }
+  const creditsHtml = () => `<p>Golden Hour has no accounts and collects nothing. To get forecasts and places, your device sends coordinates to Open-Meteo, the open map and the map tile host; a venue search sends what you type to Photon. Ratings are a forecast, not a promise: the first two days are the most reliable.</p>
+      <p>Weather by <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> (CC BY 4.0), air quality from CAMS. Maps: <a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a>, © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>. Venue search by <a href="https://photon.komoot.io" target="_blank" rel="noopener">Photon</a>. Towns from <a href="https://www.geonames.org" target="_blank" rel="noopener">GeoNames</a> (CC BY 4.0). Sun and moon after SunCalc.</p>
+      <p><a href="https://github.com/bradleycowdrey/golden-hour" target="_blank" rel="noopener">Source</a> · <a href="https://bradcowdrey.com/legal" target="_blank" rel="noopener">Terms and privacy</a> · Free and open source, by <a href="https://bradcowdrey.com" target="_blank" rel="noopener">Bradley Cowdrey</a> · ${esc(VERSION)}</p>`;
 
-  // ---------- The list of places: each with tonight's score, search to add, and compare ----------
+  // ---------- Places (the tab): your locations, and Add ----------
+  /** The answer in words: "Go tonight", "Maybe tomorrow", "Not tonight", "Skip Wednesday". */
+  function whenWord(ev) { return ev.day === 0 ? 'tonight' : ev.day === 1 ? 'tomorrow' : dayName(ev.date, true); }
+  function answerText(ev) {
+    const v = ev.rating.verdict, w = whenWord(ev);
+    return v === 'go' ? `Go ${w}` : v === 'maybe' ? `Maybe ${w}` : ev.day <= 1 ? `Not ${w}` : `Skip ${w}`;
+  }
+  const answerShort = (r) => (r.verdict === 'go' ? 'Go' : r.verdict === 'maybe' ? 'Maybe' : 'Skip');
   function listRows() {
     return S.places.map((p) => {
       const evs = evenings(p), f = focusDay(p, evs), ev = evs[f], r = ev.rating, d = DATA[p.id] || {};
-      const when = ev.times.sunset == null ? 'No sunset on this date' : `${f === 1 ? 'Tomorrow' : 'Tonight'} · sunset ${timeText(ev.times.sunset, p.tz)}`;
-      const right = r ? `<span class="rt" aria-hidden="true"><span class="big num">${scoreText(r)}</span>${colourHtml(r, true)}<span class="v ${r.verdict}">${icon(r)}${r.verdictWord}</span></span>`
-        : `<span class="rt muted small">${d.error ? 'No forecast' : ev.times.state === 'none' ? '' : '…'}</span>`;
-      return `<div class="lrow-wrap"><button type="button" class="lrow card" data-act="goto" data-id="${esc(p.id)}"${r ? ` aria-label="${esc(p.name)}. ${esc(spoken(f === 1 ? 'Tomorrow' : 'Tonight', r))}"` : ''}>
+      const when = ev.times.sunset == null ? 'No sunset on this date' : `Sunset ${timeText(ev.times.sunset, p.tz)}`;
+      const right = r ? `<span class="rt" aria-hidden="true"><span class="v ${r.verdict}">${icon(r)}${esc(answerText(ev))}</span></span>`
+        : `<span class="rt muted small">${d.error && !d.fc ? 'No forecast' : ev.times.state === 'none' ? '' : '…'}</span>`;
+      return `<div class="lrow-wrap"><button type="button" class="lrow card" data-act="goto" data-id="${esc(p.id)}"${r ? ` aria-label="${esc(p.name)}. ${esc(answerText(ev))}. ${esc(when)}."` : ''}>
         <span class="swatch" data-sky="${skyFor(r).join(',')}" aria-hidden="true"></span>
-        <span class="l"><span class="n">${esc(p.name)}${p.sample ? ' <span class="tag">Sample</span>' : ''}${p.here ? ' <span class="tag">Here</span>' : ''}</span><span class="r">${esc(when)}</span>${r ? `<span class="why">${esc(r.reason)}</span>` : ''}</span>${right}</button>
+        <span class="l"><span class="n">${esc(p.name)}${p.sample ? ' <span class="tag">Sample</span>' : ''}${p.here ? ' <span class="tag">Here</span>' : ''}</span><span class="r">${esc(when)}</span></span>${right}</button>
         ${S.editing && S.places.length > 1 ? `<button type="button" class="chip-x" data-act="remove" data-id="${esc(p.id)}" aria-label="Remove ${esc(p.name)}">×</button>` : ''}</div>`;
     }).join('');
   }
-  function compareHtml() {
-    const real = S.places.filter((x) => !x.sample).slice(0, 5);
-    if (!settings.compare || real.length < 2) return '';
-    const cols = evenings(real[0]).slice(0, 6);
-    const head = `<tr><th class="p">Place</th>${cols.map((e) => `<th>${esc(e.day === 0 ? 'Today' : dayName(e.date))}</th>`).join('')}</tr>`;
-    const rows = real.map((q) => `<tr><th class="p" scope="row">${esc(q.name)}</th>${evenings(q).slice(0, 6).map((e) => (e.rating
-      ? `<td><button type="button" data-act="cell" data-id="${esc(q.id)}" data-day="${e.day}" aria-label="${esc(q.name)}, ${esc(spoken(e.day === 0 ? 'Today' : dayName(e.date, true), e.rating))}"><span>${scoreText(e.rating)}</span><span class="v ${e.rating.verdict}">${icon(e.rating)}</span></button></td>`
-      : `<td><span class="muted small">${DATA[q.id] && DATA[q.id].error ? '!' : '–'}</span></td>`)).join('')}</tr>`).join('');
-    return `<div class="grid-scroll"><table class="cmp">${head}${rows}</table></div><p class="small muted" data-gap>Stars out of 5 for each evening. Tap a cell to open that place and evening.</p>`;
-  }
   function listView() {
     const real = S.places.filter((x) => !x.sample);
-    return `<div class="row top"><h1>Locations</h1><span class="sp"></span>${unitsSeg()}<button type="button" class="btn white" data-act="close-view">Done</button></div>
-      <section class="search card"><div class="box"><input id="q" type="search" placeholder="Search for a place to add" autocomplete="off" aria-label="Search for a place to add"></div>
+    return `<div class="row top"><h1>Places</h1><span class="sp"></span><button type="button" class="circle" data-act="settings" aria-label="Settings">${BAR.gear}</button></div>
+      <section class="search card"><div class="box"><input id="q" type="search" placeholder="Add a town or city" autocomplete="off" aria-label="Add a town or city"></div>
         <div class="results" id="results" aria-live="polite"></div>
-        <div class="row" data-gap><button type="button" class="btn" data-act="locate">Use my location</button><span class="sp"></span>${S.places.length > 1 ? `<button type="button" class="btn quiet" data-act="edit">${S.editing ? 'Done editing' : 'Edit'}</button>` : ''}</div></section>
+        <div class="row" data-gap><button type="button" class="btn" data-act="locate">Use my location</button><span class="sp"></span>${S.places.length > 1 ? `<button type="button" class="btn quiet" data-act="edit">${S.editing ? 'Done' : 'Edit'}</button>` : ''}</div></section>
       <div id="listRows" class="lrows">${listRows()}</div>
-      ${real.length > 1 ? `<section class="card"><p class="eyebrow">Side by side<span class="sp"></span><button type="button" class="tog" data-act="compare" aria-pressed="${settings.compare}"><i></i>Compare places</button></p><div id="compare">${compareHtml()}</div></section>` : ''}
-      <section class="card sharecard"><div class="row"><span><b>Share Golden Hour</b><br><span class="small muted">Free, no account. Send it to someone who loves a sunset.</span></span><span class="sp"></span><button type="button" class="btn white" data-act="share-app">${SP.share}Share</button></div></section>
-      ${footHtml()}`;
+      ${real.length === 1 ? '<p class="small hint1">Add another place to swipe between them on Today.</p>' : ''}`;
   }
   function bindSearch() { const q = $('#q'); if (q) { q.addEventListener('input', onSearchInput); if (S.focusSearch) { S.focusSearch = false; q.focus(); } } drawResults(); }
   function drawResults() {
@@ -580,7 +680,7 @@
       <p class="summary">${line}</p>${r ? deltaLine(p, ev) : ''}<hr class="rule">
       ${eveningGraphic(ev, p)}
       <div class="times">${col('Golden', f(t.goldenStart))}${col('Best light', f(t.bestStart))}${col('Sunset', f(t.sunset), ' sun')}${col('Afterglow', all ? 'All night' : f(t.afterglowEnd))}${col('Last light', all ? '–' : f(t.lastLight))}</div>
-      <p class="small muted" data-gap>${all ? 'It never gets fully dark.' : `Best light ${f(t.bestStart)} to ${f(t.bestEnd)}. Stay through the afterglow: the best colour often comes after the sun is down.`}</p></section>`;
+      <p class="small muted" data-gap>${all ? 'It never gets fully dark.' : `Best light ${f(t.bestStart)} to ${f(t.bestEnd)}. Stay through the afterglow: the best colour often comes after the sun is down. Times assume a flat horizon; hills and buildings can hide the sun sooner.`}</p></section>`;
   }
 
   // ---------- The tiles: every input to the score, each with its own graphic, as in Two Degrees ----------
@@ -708,7 +808,7 @@
         `${sceneSvg(r, x)}${sbar('colourbar', r.colour)}<div class="scale"><span>Muted</span><span>Soft</span><span>Warm</span><span>Rich</span><span>Brilliant</span></div>`,
         'Colour in the clouds is most of the score.', { wide: true, aside: '70% of the score' }));
       // Cloud cover: the canvas. High, mid and low, each filled to its share.
-      const canvasWord = d.canvas < 5 ? 'None to catch the colour' : d.canvas < 30 ? 'A little' : d.canvas <= 70 ? 'Just right' : 'Heavy';
+      const canvasWord = r.cap ? 'Hidden this evening' : d.canvas < 5 ? 'None to catch the colour' : d.canvas < 30 ? 'A little' : d.canvas <= 70 ? 'Just right' : 'Heavy';
       const layer = (name, where, v, cls) => `<span><b>${name}</b><small>${where}</small></span><div><i class="${cls}" data-w="${pc(v)}"></i></div><b class="num">${pc(v)}%</b>`;
       out.push(tile('cloud', TI.cloud, 'Cloud cover', canvasWord, `${pc(d.canvas)}% mid and high cloud to catch the light`,
         `<div class="clbars">${layer('High', imp ? 'above 5 mi' : 'above 8 km', x.high, 'good')}${layer('Mid', imp ? '2 to 5 mi' : '3 to 8 km', x.mid, 'good')}${layer('Low', imp ? 'under 2 mi' : 'under 3 km', x.low, 'bad')}</div>`,
@@ -765,113 +865,220 @@
     return '';
   }
 
-  /** The tiles behind the score, folded away until asked for: the page leads with the rating, where to go
-      and the evening. The choice is remembered. */
-  function detailFold(ev, p) {
-    const tiles = tilesHtml(ev, p);
-    if (!tiles) return '';
+  /** Why this answer: the score, the colour and the range, the evening's times and every input, one tap down. */
+  function scoreCard(ev, p) {
+    const r = ev.rating;
+    const range = rangeText(r);
+    return `<section class="card scorecard"><p class="eyebrow">${TI.colour}<span>The rating</span></p>
+      <div class="tonight"><span class="big num">${scoreText(r)}</span><span class="tl2"><b class="c-${r.colourClass.toLowerCase()}">${r.colourClass} colour · ${r.colour} of 100</b>
+        <span class="small">${range.charAt(0).toUpperCase() + range.slice(1)} out of 5${r.tier === 'outlook' ? '. Three to five days out, so it could change' : ''}.</span></span></div>${deltaLine(p, ev)}</section>`;
+  }
+  function whyFold(ev, p) {
+    const r = ev.rating;
+    if (!r) return '';
     const open = store.get('details', false);
-    return `<section class="fold"><button type="button" class="foldrow" data-act="details-toggle" aria-expanded="${open}">
-        <span class="ft"><b>What’s behind the score</b><small>Colour, cloud, air, wind, comfort and the moon</small></span>
-        <span class="fa">${open ? 'Hide' : 'Show'}</span><span class="chev${open ? ' up' : ''}">${SP.chev}</span></button></section>${open ? tiles : ''}`;
+    const head = `<section class="fold"><button type="button" class="foldrow" data-act="details-toggle" aria-expanded="${open}">
+        <span class="ft"><b>Why</b><small>${scoreText(r)} of 5 · ${r.colourClass} colour · the evening’s times</small></span>
+        <span class="fa">${open ? 'Hide' : 'Show'}</span><span class="chev${open ? ' up' : ''}">${SP.chev}</span></button></section>`;
+    return open ? `${head}${scoreCard(ev, p)}${eveningCard(ev, p)}${tilesHtml(ev, p)}` : head;
   }
 
-  // ---------- A day's detail: a sheet over the location's page, as in Two Degrees ----------
-  const sheetDays = (evs) => evs.map((e, i) => (e.rating ? i : -1)).filter((i) => i >= 0);
-  function sheetHtml() {
-    const p = place(S.sheet.placeId), evs = p ? evenings(p) : [], ev = evs[S.sheet.day], r = ev && ev.rating;
-    if (!p || !r) { S.sheet = null; return ''; }
-    const days = sheetDays(evs), at = days.indexOf(S.sheet.day), label = evLabel(ev, p, evs);
-    const arrow = (d, on) => `<button type="button" class="circle sm" data-act="sheet-step" data-d="${d}" aria-label="${d < 0 ? 'The evening before' : 'The next evening'}"${on ? '' : ' disabled'}>${d < 0 ? '‹' : '›'}</button>`;
-    const warns = r.warnings.map((w) => `<div class="warn" role="note">${ICON.warn}<span>${esc(w.text)}</span></div>`).join('');
-    const cta = now() < endOf(ev, p) ? `<div class="cta"><button type="button" class="btn white" data-act="plan-new" data-date="${ev.date}">Plan this evening</button></div>` : '';
-    return `<div class="sh-head"><button type="button" class="done" data-act="sheet-close">Done</button><h2 id="sheetTitle">${esc(dayName(ev.date, true))}, ${esc(dateText(ev.date))}</h2><span class="nav">${arrow(-1, at > 0)}${arrow(1, at < days.length - 1)}</span></div>
-      <section class="hero sheethero" aria-label="${esc(spoken(label, r))}"><p class="when">${esc(p.name)} · ${esc(label)}</p>
-        <div class="score" aria-hidden="true"><span class="n">${scoreText(r)}</span><span class="of">/ 5</span></div>
-        <div aria-hidden="true">${stars(r.tier === 'outlook' ? r.shown : r.score, r.tier === 'outlook')}</div>
-        <p class="cond colour c-${r.colourClass.toLowerCase()}" aria-hidden="true"><b>${r.colourClass}</b> colour <span class="n num">· ${r.colour}</span></p>
-        <p class="hilo verdict ${r.verdict}" aria-hidden="true">${icon(r)}<span>${r.verdictWord}${r.qualifier ? `<span class="q">, ${esc(r.qualifier)}</span>` : ''}</span></p>
-        <p class="hilo other range" aria-hidden="true">${r.tier === 'outlook' ? 'Outlook' : r.tier === 'forecast' ? 'Forecast' : 'Tonight'} · ${rangeText(r)} (typical)</p></section>
-      ${warns}${cta}${eveningCard(ev, p)}${tilesHtml(ev, p)}`;
+  /** The answer: go or not, why, and one time. */
+  function answerBlock(ev, p, evs) {
+    const r = ev.rating, t = ev.times, next = r.verdict === 'skip' ? nextGood(evs, ev) : null;
+    const tail = r.verdict === 'skip' ? (next ? ` Try ${esc(dayName(next.date, true))}.` : '') : r.tier === 'outlook' ? ' Could change.' : '';
+    return `<p class="ans" aria-hidden="true">${icon(r)}<span>${esc(answerText(ev))}</span></p>
+      <p class="reason" aria-hidden="true">${esc(r.reason)}${tail}</p>
+      <p class="atimes" aria-hidden="true"><b>Sunset ${esc(timeText(t.sunset, p.tz))}</b>${r.verdict === 'skip' ? '' : ` · be there by ${esc(timeText(t.bestStart - 20 * MIN, p.tz))}`}</p>`;
   }
-  function drawSheet(focus) {
-    const back = $('#sheetback');
-    if (!back) return;
-    const html = S.sheet ? sheetHtml() : '';
-    document.body.classList.toggle('sheet-open', !!S.sheet);
-    if (!S.sheet) { back.hidden = true; back.innerHTML = ''; return; }
-    const top = back.scrollTop;
-    back.hidden = false;
-    back.innerHTML = `<div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle" tabindex="-1">${html}</div>`;
-    dyn(back);
-    if (focus) { back.scrollTop = 0; $('#sheet').focus({ preventScroll: true }); } else back.scrollTop = top;
+  function spokenAnswer(ev, p, evs) {
+    const r = ev.rating, next = r.verdict === 'skip' ? nextGood(evs, ev) : null;
+    return `${p.name}. ${answerText(ev)}. ${r.reason}${next ? ` Try ${dayName(next.date, true)}.` : ''} Sunset ${timeText(ev.times.sunset, p.tz)}${r.verdict === 'skip' ? '' : `, be there by ${timeText(ev.times.bestStart - 20 * MIN, p.tz)}`}.`;
   }
-  function stepSheet(d) {
-    if (!S.sheet) return;
-    const days = sheetDays(evenings(place(S.sheet.placeId))), next = days[days.indexOf(S.sheet.day) + d];
-    if (next == null) return;
-    S.sheet.day = next; drawSheet(true);
+  function updatedLine(p) {
+    const d = DATA[p.id] || {};
+    if (d.source === 'sample') return '<p class="upd">Sample forecast</p>';
+    if (!d.fetchedAt) return '';
+    const failed = d.error === 'network' || d.error === 'stale', old = now() - d.fetchedAt > 3 * HOUR;
+    return `<p class="upd${old || failed ? ' stale' : ''}">${failed ? 'Couldn’t refresh. ' : ''}Updated ${esc(old || failed ? ago(d.fetchedAt) : timeText(d.fetchedAt, p.tz))} · <button type="button" class="link" data-act="retry">${failed ? 'Try again' : 'Refresh'}</button></p>`;
   }
 
-  /** One place's page, laid out as Two Degrees lays out a city: the reading on the sky, the evening, the ten
-      evenings ahead, then a tile for every input. */
+  /** The one place to go: your own nearest spot if you have one, otherwise the top easy-to-reach place. */
+  function bestPlace(p) {
+    const mine = ownSpots(p), s = allSpots(p);
+    return mine[0] || (s && (s.easy[0] || s.dining[0] || s.adventurous[0])) || null;
+  }
+  /** Where the places stand when there are none to show: still looking, failed, or none found. */
+  function placesState(p) {
+    const d = DATA[p.id] || {};
+    if (d.spots === 'error') return `<p class="pstate">Couldn’t load places near ${esc(p.name)}. <button type="button" class="link" data-act="spots-retry" data-place="${esc(p.id)}">Try again</button></p>`;
+    if (!allSpots(p)) return `<p class="pstate" aria-busy="true">Looking for places near ${esc(p.name)}…</p>`;
+    return `<p class="pstate">No places listed near ${esc(p.name)} in the open map. You can add your own.</p>`;
+  }
+  const planWord = (ev) => (ev.day === 0 ? 'this evening' : ev.day === 1 ? 'tomorrow' : dayName(ev.date, true));
+  function pickCard(p, ev, evs) {
+    const r = ev.rating;
+    if (!r || now() > endOf(ev, p)) return '';
+    if (r.verdict === 'skip') {
+      const next = nextGood(evs, ev);
+      if (!next) return '<section class="card pick"><p class="eyebrow">Next good evening</p><p>None in the next five days yet. Look again tomorrow.</p></section>';
+      return `<section class="card pick"><p class="eyebrow">Next good evening</p>
+        <button type="button" class="srow dayline" data-act="day" data-date="${next.date}"><span class="ic v ${next.rating.verdict}" aria-hidden="true">${icon(next.rating)}</span>
+          <span class="sl"><span class="n">${esc(answerText(next))}</span><span class="r">Sunset ${esc(timeText(next.times.sunset, p.tz))}. ${esc(next.rating.reason)}</span></span><span class="chev">${SP.chev}</span></button>
+        <div class="cta"><button type="button" class="btn primary" data-act="plan-new" data-date="${next.date}">Plan ${esc(dayName(next.date, true))}</button></div></section>`;
+    }
+    const best = bestPlace(p);
+    return `<section class="card pick"><p class="eyebrow">${best && best.cat === 'own' ? 'Your spot' : 'Where to watch'}</p>
+      ${best ? spotRow(best, p) : placesState(p)}
+      <div class="cta"><button type="button" class="btn primary" data-act="plan-new" data-date="${ev.date}"${best ? ` data-id="${esc(best.id)}"` : ''}>Plan ${esc(planWord(ev))}</button></div></section>`;
+  }
+  /** A few more places under the one on top, and the way in to all of them. None is pushed on a Not tonight. */
+  function morePlaces(p, ev) {
+    const s = allSpots(p), best = bestPlace(p), r = ev.rating;
+    const all = `<button type="button" class="more" data-act="spots-all" data-place="${esc(p.id)}">All places near ${esc(p.name)}</button>`;
+    if (r && r.verdict === 'skip') return `<section class="card moreplaces">${all}</section>`;
+    const picks = ownSpots(p).slice(0, 2);
+    if (s) { picks.push(...s.easy.slice(0, 2), ...s.dining.slice(0, 1)); if (r && r.verdict === 'go') picks.push(...s.adventurous.slice(0, 1)); }
+    // With an answer, the first place is already on top; without one (no forecast yet) the places still show here.
+    const rows = picks.filter((x) => !r || !best || x.id !== best.id).slice(0, 3);
+    return `<section class="card moreplaces"><p class="eyebrow">${r ? 'More places' : 'Where to watch'}</p>${rows.length ? rows.map((x) => spotRow(x, p)).join('') : r && best ? '' : placesState(p)}${all}</section>`;
+  }
+  function weekCard(p, evs) {
+    const later = evs.find((e) => !e.rating && e.day > 5), today = localDate(now(), p.tz);
+    return `<section class="card daily"><p class="eyebrow">${TI.cal}<span>The evenings ahead</span><span class="sp"></span><button type="button" class="link" data-act="share-week" data-place="${esc(p.id)}">Share</button></p>
+      <div class="days">${evs.filter((e) => e.rating || e.times.state === 'none' || e.day <= 5).map((e) => dayRow(e, p)).join('')}
+        ${later ? `<div class="day later"><span class="why">${esc(dayName(later.date, true))}, ${esc(dateText(later.date))} and beyond: too early for colour</span></div>` : ''}</div>
+      <label class="anydate"><span>Another date</span><input type="date" id="anyDate" data-place="${esc(p.id)}" min="${today}" max="${addDays(today, 366)}" aria-label="See the sunset times on another date"></label>
+      <p class="small muted" data-gap>Tap an evening for more. Three to five days out could change. Sunset times are exact for any date.</p></section>`;
+  }
+
+  /** One place's page: the answer, one time, one place and the way to plan it; then why, more places and the week. */
   function pageHtml(p) {
-    const d = DATA[p.id] || {}, evs = evenings(p), f = focusDay(p, evs);
-    const ev = evs[S.dayBy[p.id] == null ? f : S.dayBy[p.id]] || evs[f], r = ev.rating;
-    const label = evLabel(ev, p, evs);
-    const head = `<button type="button" class="circle heroshare" data-act="share-today" aria-label="Share ${esc(label.toLowerCase())}’s sunset">${SP.share}</button><h2>${esc(p.name)}${p.sample ? ' <span class="tag">Sample</span>' : ''}</h2><p class="when">${esc(label)} · ${esc(dayName(ev.date, true))}, ${esc(dateText(ev.date))}${p.region ? ` · ${esc(p.region)}` : ''}</p>`;
+    const d = DATA[p.id] || {}, evs = evenings(p), f = focusDay(p, evs), ev = evs[f], r = ev.rating;
+    const head = `${r ? `<button type="button" class="circle heroshare" data-act="share-today" aria-label="Share ${esc(whenWord(ev))}’s sunset">${SP.share}</button>` : ''}<h2>${esc(p.name)}${p.sample ? ' <span class="tag">Sample</span>' : ''}</h2>
+      <p class="when">${esc(dayName(ev.date, true))}, ${esc(dateText(ev.date))}${p.region ? ` · ${esc(p.region)}` : ''}</p>`;
     let hero;
-    if (ev.times.state === 'none') hero = `<section class="hero">${head}<p class="none">No sunset here on this date</p><p class="cond">${ev.times.polar === 'day' ? 'The sun stays up all night.' : 'The sun stays below the horizon.'}</p></section>`;
-    else if (r) {
-      const stale = d.source !== 'sample' && now() - d.fetchedAt > 3 * HOUR;
-      hero = `<section class="hero" aria-label="${esc(spoken(label, r))}">${head}
-        <div class="score${stale ? ' stale' : ''}" aria-hidden="true"><span class="n">${scoreText(r)}</span><span class="of">/ 5</span></div>
-        <div aria-hidden="true">${stars(r.tier === 'outlook' ? r.shown : r.score, r.tier === 'outlook')}</div>
-        <p class="cond colour c-${r.colourClass.toLowerCase()}" aria-hidden="true"><b>${r.colourClass}</b> colour <span class="n num">· ${r.colour}</span></p>
-        <p class="hilo verdict ${r.verdict}" aria-hidden="true">${icon(r)}<span>${r.verdictWord}${r.qualifier ? `<span class="q">, ${esc(r.qualifier)}</span>` : ''}</span></p>
-        <p class="hilo other range" aria-hidden="true">${r.tier === 'outlook' ? 'Outlook' : r.tier === 'forecast' ? 'Forecast' : 'Tonight'} · ${rangeText(r)} (typical)</p>
-        ${stale ? '<p class="hilo other">Out of date. Reconnect to refresh.</p>' : ''}
-      </section>`;
-    } else if (ev.day > 5) hero = `<section class="hero">${head}<p class="none">Too early to call</p><p class="cond">Sunset is at ${esc(timeText(ev.times.sunset, p.tz))}. A rating appears five days ahead.</p></section>`;
-    else if (d.error) hero = `<section class="hero">${head}<p class="none">${d.error === 'ceiling' ? 'Refreshing again tomorrow' : 'Couldn’t reach the forecast'}</p><div class="cta"><button type="button" class="btn white" data-act="retry">Try again</button></div></section>`;
+    if (ev.times.state === 'none') hero = `<section class="hero">${head}<p class="none">No sunset here on this date</p><p class="reason">${ev.times.polar === 'day' ? 'The sun stays up all night.' : 'The sun stays below the horizon.'}</p></section>`;
+    else if (r) hero = `<section class="hero answer v-${r.verdict}" aria-label="${esc(spokenAnswer(ev, p, evs))}">${head}${answerBlock(ev, p, evs)}${updatedLine(p)}</section>`;
+    else if (d.error) hero = `<section class="hero">${head}<p class="none">${d.error === 'ceiling' ? 'Refreshing again tomorrow' : 'Couldn’t reach the forecast'}</p>
+      <p class="atimes"><b>Sunset ${esc(timeText(ev.times.sunset, p.tz))}</b> · be there by ${esc(timeText(ev.times.bestStart - 20 * MIN, p.tz))}</p>
+      <div class="cta"><button type="button" class="btn white" data-act="retry">Try again</button></div></section>`;
     else if (d.fc) hero = `<section class="hero">${head}<p class="none">No forecast for this evening yet</p></section>`;
     else hero = `<section class="hero skeleton" aria-busy="true">${head}<div class="bone" data-w="40"></div><div class="bone" data-w="60"></div><div class="bone" data-w="50"></div></section>`;
 
     const warns = r ? r.warnings.map((w) => `<div class="warn" role="note">${ICON.warn}<span>${esc(w.text)}</span></div>`).join('') : '';
-    const canPlan = ev.times.state !== 'none' && now() < endOf(ev, p);
-    const cta = canPlan ? `<div class="cta"><button type="button" class="btn white" data-act="plan-new" data-date="${ev.date}">Plan this evening</button></div>` : '';
-    const sample = p.sample ? `<section class="card ask"><h3>This is a sample forecast</h3><p>Add where you are to see the real one. You can add several locations and swipe between them.</p><div class="row" data-gap><button type="button" class="btn white" data-act="add-place">Add a location</button></div></section>` : '';
-    const back = S.dayBy[p.id] != null && S.dayBy[p.id] !== f ? `<button type="button" class="btn quiet back" data-act="day" data-day="">‹ Back to ${f === 1 ? 'tomorrow' : 'tonight'}</button>` : '';
-    const best = bestOf(evs);
-    const week = `<section class="card daily"><p class="eyebrow">${TI.cal}<span>The evenings ahead</span><span class="sp"></span><span class="aside">Colour</span></p><div class="days">${evs.filter((e) => e.rating || e.times.state === 'none' || e.day <= 5).map((e) => dayRow(e, p, evs, best, ev)).join('')}${(() => { const later = evs.find((e) => !e.rating && e.day > 5); return later ? `<div class="day later"><span class="why">${esc(dayName(later.date, true))}, ${esc(dateText(later.date))} and beyond: too early to call</span></div>` : ''; })()}</div>
-      <p class="small muted" data-gap>The bar is the colour score. Tap an evening for its detail. Days three to five are an outlook and may change.</p></section>`;
-    return `${back}<div class="two"><div class="col">${hero}${warns}${ev.times.state === 'none' ? '' : placesStrip(p)}${cta}${sample}</div><div class="col">${howWasIt(p, evs)}${ev.times.state === 'none' ? '' : eveningCard(ev, p)}${week}</div></div>${detailFold(ev, p)}${placesSection(p)}${footHtml()}`;
+    const sample = p.sample ? `<section class="card ask"><h3>This is a sample forecast</h3><p>Add where you are to see the real one.</p><div class="row" data-gap><button type="button" class="btn white" data-act="add-place">Add my place</button></div></section>` : '';
+    const lone = !p.sample && S.places.length === 1 ? '<span>Add another place to swipe between them. </span>' : '';
+    return `<div class="two"><div class="col">${hero}${warns}${pickCard(p, ev, evs)}${sample}${howWasIt(p, evs)}</div>
+      <div class="col">${whyFold(ev, p)}${ev.times.state === 'none' ? '' : morePlaces(p, ev)}${weekCard(p, evs)}</div></div>
+      <p class="small pagefoot">${lone}<button type="button" class="link" data-act="settings">Settings, units and credits</button></p>`;
   }
+
+  // ---------- Sheets: a day, a place, the place picker and Settings, over whatever is showing ----------
+  /** The light a photographer plans around, the direction the sun sets, and when to decide. */
+  function lightCard(ev, tz, deciding) {
+    const t = ev.times, w = G.lightWindows(t), f = (ms) => esc(timeText(ms, tz));
+    if (!w) return '';
+    const rows = [`<li><span><b>Golden hour ${f(w.golden[0])} to ${f(w.golden[1])}</b><br><span class="small muted">Low, warm light: the time for portraits.</span></span></li>`];
+    if (w.blue) rows.push(`<li><span><b>Blue hour ${f(w.blue[0])} to ${f(w.blue[1])}</b><br><span class="small muted">Soft blue light after the glow fades, then dark.</span></span></li>`);
+    if (t.azimuth != null) rows.push(`<li><span>The sun sets to the ${esc(compass(t.azimuth))} (${pointOf(t.azimuth)}, ${Math.round(t.azimuth)}°).</span></li>`);
+    if (deciding && ev.rating && ev.day <= 1) {
+      const d = deciding, x = ev.x;
+      rows.push(`<li><span>Decide by ${f(t.bestStart - 20 * MIN - 3 * HOUR)}, three hours before you’d be there. Forecast updated ${esc(d)}.${x && x.wind != null ? ` Wind ${esc(G.windText(G.feltWind(x.wind, x.gusts), settings.imperialFirst))}.` : ''}</span></li>`);
+    }
+    return `<section class="card light"><p class="eyebrow">${TI.sun}<span>The light</span></p><ul class="facts">${rows.join('')}</ul></section>`;
+  }
+  function daySheet() {
+    const sh = S.sheet, p = place(sh.placeId);
+    if (!p) return '';
+    const today = localDate(now(), p.tz), ev = eveningOn(p, sh.date), r = ev.rating, t = ev.times, d = DATA[p.id] || {};
+    const arrow = (n, on) => `<button type="button" class="circle sm" data-act="sheet-step" data-d="${n}" aria-label="${n < 0 ? 'The evening before' : 'The next evening'}"${on ? '' : ' disabled'}>${n < 0 ? '‹' : '›'}</button>`;
+    const head = `<div class="sh-head"><button type="button" class="done" data-act="sheet-close">Done</button><h2 id="sheetTitle">${esc(dayName(sh.date, true))}, ${esc(dateText(sh.date))}</h2><span class="nav">${arrow(-1, sh.date > today)}${arrow(1, sh.date < addDays(today, 366))}</span></div>`;
+    if (t.state === 'none') return `${head}<section class="hero sheethero"><p class="when">${esc(p.name)}</p><p class="none">No sunset here on this date</p></section>`;
+    const hero = r ? `<section class="hero answer sheethero v-${r.verdict}" aria-label="${esc(spokenAnswer(ev, p, evenings(p)))}"><p class="when">${esc(p.name)}</p>${answerBlock(ev, p, evenings(p))}</section>`
+      : `<section class="hero sheethero"><p class="when">${esc(p.name)}</p><p class="ans plain"><span>Sunset ${esc(timeText(t.sunset, p.tz))}</span></p>
+          <p class="reason">${ev.day > 5 ? 'Times are exact. Colour can’t be forecast yet.' : 'No forecast for this evening yet.'}</p></section>`;
+    const warns = r ? r.warnings.map((w) => `<div class="warn" role="note">${ICON.warn}<span>${esc(w.text)}</span></div>`).join('') : '';
+    const cta = now() < endOf(ev, p) ? `<div class="cta"><button type="button" class="btn primary" data-act="plan-new" data-date="${ev.date}" data-place="${esc(p.id)}">Plan ${esc(planWord(ev))}</button></div>` : '';
+    const upd = d.fetchedAt && d.source !== 'sample' ? timeText(d.fetchedAt, p.tz) : null;
+    return `${head}${hero}${warns}${cta}${lightCard(ev, p.tz, upd)}${r ? scoreCard(ev, p) : ''}${eveningCard(ev, p)}${r ? tilesHtml(ev, p) : ''}`;
+  }
+  /** Where a new plan happens: your spots and the top places, or somewhere else. */
+  function pickSheet() {
+    const sh = S.sheet, p = place(sh.placeId);
+    if (!p) return '';
+    const s = allSpots(p), rows = ownSpots(p).slice(0, 3);
+    if (s) rows.push(...s.easy.slice(0, 5), ...s.dining.slice(0, 3), ...s.adventurous.slice(0, 2));
+    return `<div class="sh-head"><button type="button" class="done" data-act="sheet-close">Cancel</button><h2 id="sheetTitle">Where?</h2><span></span></div>
+      <section class="card"><p class="eyebrow">${esc(dayName(sh.date, true))}, ${esc(dateText(sh.date))} · near ${esc(p.name)}</p>
+        ${rows.length ? rows.map((x) => spotRow(x, p, null, 'plan-here', sh.date)).join('') : placesState(p)}</section>
+      <div class="cta"><button type="button" class="btn white" data-act="plan-blank" data-date="${sh.date}" data-place="${esc(p.id)}">Somewhere else</button></div>`;
+  }
+  function statusHtml() {
+    const p = place(), d = (p && DATA[p.id]) || {};
+    const facts = [`Golden Hour ${VERSION}`, navigator.onLine ? 'Online' : 'Offline', db.isBlocked() ? 'Storage is blocked in this browser mode' : 'Storage is working',
+      `${budget(0)} of ${CEILING} forecast requests used today`, p ? `${p.name}: forecast ${d.fc ? `from ${d.source === 'sample' ? 'the sample' : ago(d.fetchedAt)}` : 'not loaded'}${d.error ? ` (${d.error})` : ''}; places ${allSpots(p) ? 'loaded' : d.spots === 'error' ? 'failed' : 'not loaded'}` : ''];
+    const rows = STATUS.map((s) => `<li class="${s.ok ? 'ok' : 'bad'}"><span><b>${esc(s.what)}</b>: ${s.ok ? '' : 'failed, '}${esc(s.detail)}<br><span class="small muted">${esc(new Intl.DateTimeFormat(navigator.language || 'en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' }).format(s.at))}${s.ms != null ? ` · took ${(s.ms / 1000).toFixed(1)} s` : ''}</span></span></li>`).join('');
+    return `<section class="card"><p class="eyebrow">Now</p><ul class="facts">${facts.filter(Boolean).map((f) => `<li><span>${esc(f)}</span></li>`).join('')}</ul></section>
+      <section class="card status"><p class="eyebrow">What the app last asked for</p>${rows ? `<ul class="facts">${rows}</ul>` : '<p class="small muted">Nothing yet.</p>'}
+        <div class="row" data-gap><button type="button" class="btn" data-act="copy-status">Copy status</button></div>
+        <p class="small muted" data-gap>If something isn’t working, a screenshot of this page says what failed. It stays on your device unless you send it.</p></section>`;
+  }
+  function settingsSheet() {
+    const pg = S.sheet.page || 'main';
+    const head = (title, sub) => `<div class="sh-head"><button type="button" class="done" data-act="${sub ? 'settings-page' : 'sheet-close'}" data-page="main">${sub ? '‹ Settings' : 'Done'}</button><h2 id="sheetTitle">${title}</h2><span></span></div>`;
+    if (pg === 'status') return head('Status', true) + statusHtml();
+    if (pg === 'log') return head('My sunset log', true) + logHtml();
+    const row = (act, page, label, sub) => `<button type="button" class="plan-row" data-act="${act}"${page ? ` data-page="${page}"` : ''}><span><span class="n">${label}</span>${sub ? `<br><span class="r">${sub}</span>` : ''}</span><span class="sp"></span><span aria-hidden="true">›</span></button>`;
+    return `${head('Settings')}<section class="card"><p class="eyebrow">Units listed first</p>${unitsSeg()}</section>
+      <section class="card">${row('settings-page', 'log', 'My sunset log', 'How the forecast did on evenings you rated')}${row('settings-page', 'status', 'Status', 'What the app last asked for and what came back')}${row('share-app', '', 'Share Golden Hour', 'Free, no account')}</section>
+      <section class="card foot">${creditsHtml()}</section>`;
+  }
+  function drawSheet(focus) {
+    const back = $('#sheetback');
+    if (!back) return;
+    const sh = S.sheet;
+    const html = !sh ? '' : sh.kind === 'day' ? daySheet() : sh.kind === 'spot' ? spotSheet() : sh.kind === 'pick' ? pickSheet() : sh.kind === 'settings' ? settingsSheet() : '';
+    document.body.classList.toggle('sheet-open', !!html);
+    if (!html) { back.hidden = true; back.innerHTML = ''; return; }
+    const top = back.scrollTop;
+    back.hidden = false;
+    back.innerHTML = `<div class="sheet k-${sh.kind}" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle" tabindex="-1">${html}</div>`;
+    dyn(back);
+    if (sh.kind === 'spot') mountMap();
+    if (focus) { back.scrollTop = 0; $('#sheet').focus({ preventScroll: true }); } else back.scrollTop = top;
+  }
+  function stepSheet(d) {
+    const sh = S.sheet;
+    if (!sh || sh.kind !== 'day') return;
+    const p = place(sh.placeId), today = localDate(now(), p.tz), next = addDays(sh.date, d);
+    if (next < today || next > addDays(today, 366)) return;
+    sh.date = next; drawSheet(true);
+  }
+
   const compass = (deg) => ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'][Math.round(G.normalize(deg) / 45) % 8];
 
   // ---------- How was it? ----------
-  /** The evening just gone, if it was rated and hasn't been answered: today's once it is over, else yesterday's. */
+  /** Yesterday's evening, if it was rated and hasn't been answered or put off: asked once, the next morning. */
   function pendingRating(p, evs) {
     const d = DATA[p.id];
     if (!d || p.sample) return null;
-    const over = now() > endOf(evs[0], p);
-    const date = over ? evs[0].date : addDays(evs[0].date, -1);
+    const date = addDays(evs[0].date, -1);
     if (!d.logged || !d.logged[date]) return null;
     if (S.ratings.some((r) => r.placeId === p.id && r.date === date)) return null;
+    if (store.get('hwiSkip', '') === `${p.id}|${date}`) return null;
     return { date, predicted: d.logged[date] };
   }
   function howWasIt(p, evs) {
     const q = pendingRating(p, evs), j = S.justRated;
     if (!q && j && j.placeId === p.id) return `<section class="card" id="ratedCard"><p class="eyebrow">Thanks</p>
-      <p>You said ${j.observed} of 5; we forecast ${j.predicted.toFixed(1)}. It’s saved in your sunset log on this device.</p>
-      <div class="row" data-gap><a class="btn white" target="_blank" rel="noopener" href="${esc(feedbackUrl([j]))}">Send it to GitHub</a><button type="button" class="btn" data-act="log">My sunset log</button></div>
-      <p class="small muted" data-gap>Sending opens a pre-filled, public report on GitHub for you to review first. It names ${esc(p.name)}, never where you stood.</p></section>`;
+      <p>Saved in your sunset log on this device. It helps tune the forecast.</p></section>`;
     if (!q) return '';
     const words = ['Nothing', 'Dull', 'Pleasant', 'Lovely', 'Stunning'];
     return `<section class="card" id="howWasIt"><p class="eyebrow">How was it?</p>
-      <p>How was the sunset in ${esc(p.name)} ${q.date === evs[0].date ? 'tonight' : 'last night'}? We forecast ${q.predicted.score.toFixed(1)}. Your answer stays on this device and helps tune the rating.</p>
+      <p>How was last night’s sunset in ${esc(p.name)}? Your answer stays on this device.</p>
       <div class="rate" data-gap>${words.map((w, i) => `<button type="button" data-act="rate" data-date="${q.date}" data-v="${i + 1}" aria-label="${i + 1} out of 5: ${w}">${i + 1}<small>${w}</small></button>`).join('')}</div>
-      <div class="row" data-gap><span class="sp"></span><button type="button" class="btn quiet" data-act="rate" data-date="${q.date}" data-v="0">Didn’t see it</button></div></section>`;
+      <div class="row" data-gap><button type="button" class="btn quiet" data-act="rate-later" data-date="${q.date}">Not now</button><span class="sp"></span><button type="button" class="btn quiet" data-act="rate" data-date="${q.date}" data-v="0">Didn’t see it</button></div></section>`;
   }
   async function loadLogged(p) {
     const d = DATA[p.id] || (DATA[p.id] = { prev: {}, snaps: {} });
@@ -882,17 +1089,16 @@
       if (rec && rec.score != null) d.logged[date] = rec;
     }
   }
-  function logView() {
+  function logHtml() {
     const rows = S.ratings.filter((r) => r.observed).sort((a, b) => (a.date < b.date ? 1 : -1));
     const name = (id) => { const p = S.places.find((x) => x.id === id); return p ? p.name : 'A removed place'; };
     const within = rows.filter((r) => Math.abs(r.observed - r.predicted) <= 1).length;
-    return `<button type="button" class="btn quiet back" data-act="close-view">‹ Back</button>
-      <section class="card"><p class="eyebrow">My sunset log</p>
+    return `<section class="card">
       ${rows.length ? `<p>${rows.length} evening${rows.length === 1 ? '' : 's'} rated. The forecast was within one star on ${within} of them.</p>
         <div data-gap>${rows.map((r) => `<div class="plan-row"><span><span class="n">${esc(dayName(r.date))} ${esc(dateText(r.date))} · ${esc(name(r.placeId))}</span><br><span class="r">Forecast ${r.predicted.toFixed(1)} · You said ${r.observed} of 5</span></span></div>`).join('')}</div>
-        <div class="row" data-gap><button type="button" class="btn" data-act="copy-log">Copy my log</button><a class="btn" target="_blank" rel="noopener" href="${esc(feedbackUrl(rows))}">Send feedback</a></div>
-        <p class="small muted" data-gap>Nothing is sent unless you choose Send feedback, which opens a pre-filled report on GitHub for you to review.</p>`
-    : '<p class="empty">No evenings rated yet. After last light, Golden Hour asks how the sunset was.</p>'}</section>`;
+        <div class="row" data-gap><button type="button" class="btn" data-act="copy-log">Copy my log</button><a class="btn" target="_blank" rel="noopener" href="${esc(feedbackUrl(rows))}">Send it to GitHub</a></div>
+        <p class="small muted" data-gap>Nothing is sent unless you choose to. Sending opens a pre-filled, public report on GitHub for you to review first. It names the town, never where you stood.</p>`
+    : '<p class="empty">No evenings rated yet. The morning after an evening, Golden Hour asks how the sunset was.</p>'}</section>`;
   }
   function feedbackUrl(rows) {
     const body = 'My Golden Hour sunset log (forecast → what I saw):\n\n' + rows.slice(0, 40).map((r) => `${r.date}  ${(S.places.find((x) => x.id === r.placeId) || { name: '?' }).name}  forecast ${r.predicted.toFixed(1)}  saw ${r.observed}/5  parts c${r.parts.c.toFixed(2)} s${r.parts.s.toFixed(2)} a${r.parts.a.toFixed(2)} k${r.parts.k.toFixed(2)}`).join('\n');
@@ -902,7 +1108,7 @@
   // ---------- Week and Compare ----------
   /** One evening in the list of ten, as Two Degrees shows a day: the day, the verdict, the score, a bar for
       the colour, and the colour class over the sunset time. */
-  function dayRow(ev, p, evs, best, shown) {
+  function dayRow(ev, p) {
     const label = ev.day === 0 ? 'Today' : ev.day === 1 ? 'Tomorrow' : dayName(ev.date, true), short = ev.day === 0 ? 'Today' : dayName(ev.date);
     const mark = !ev.rating || ev.rating.verdict !== 'go' ? '' : ev.rating.score >= 4.5 ? 'Great' : 'Good';
     const d = `<span class="d">${esc(short)}${mark ? `<small class="best">${mark}</small>` : ''}</span>`;
@@ -910,105 +1116,154 @@
     if (ev.times.state === 'none') return `<div class="day none">${d}<span class="why">No sunset here on this date</span><span class="hi"></span></div>`;
     if (!ev.rating) return `<div class="day none">${d}<span class="why">${ev.day > 5 ? 'Too early to call' : 'No forecast yet'}</span><span class="hi"><span>Sunset ${sunset}</span></span></div>`;
     const r = ev.rating, out = r.tier === 'outlook', cls = r.colourClass.toLowerCase();
-    return `<button type="button" class="day${out ? ' outlook' : ''}${shown && shown.date === ev.date ? ' on' : ''}" data-act="day" data-day="${ev.day}" aria-label="${esc(spoken(label, r))}">${d}
-      <span class="ic v ${r.verdict}" aria-hidden="true">${icon(r)}<small>${r.verdictWord}</small></span>
+    return `<button type="button" class="day${out ? ' outlook' : ''}" data-act="day" data-date="${ev.date}" data-place="${esc(p.id)}" aria-label="${esc(label)}. ${esc(answerShort(r))}. ${esc(r.reason)}">${d}
+      <span class="ic v ${r.verdict}" aria-hidden="true">${icon(r)}<small>${answerShort(r)}</small></span>
       <span class="sc num" aria-hidden="true">${scoreText(r)}</span>
       <span class="cbar" aria-hidden="true"><i class="f-${cls}" data-w="${Math.max(3, r.colour)}"></i></span>
       <span class="hi" aria-hidden="true"><b class="c-${cls}">${r.colourClass}</b><span>${sunset}</span></span></button>`;
   }
 
   // ---------- Plans ----------
+  const hhmm = (ms, tz) => new Intl.DateTimeFormat('en-GB', { timeZone: tzOr(tz), hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(ms);
+  /** "17:05" on a date in a zone → the moment, or null when it isn't a time. */
+  function clockOn(date, text, tz) {
+    const m = /^(\d{1,2}):(\d{2})$/.exec(text || '');
+    return m && +m[1] < 24 && +m[2] < 60 ? startOfDay(date, tz) + +m[1] * HOUR + +m[2] * MIN : null;
+  }
+  /** What has happened to a plan's evening since it was made: "was 4.2, now 3.1". */
+  function changeText(was, r) {
+    if (was == null || !r || Math.abs(r.score - was) < 0.5) return '';
+    return `Was ${was.toFixed(1)} when you made this plan, now ${r.score.toFixed(1)}.`;
+  }
   function plansView() {
     const today = localDate(now(), deviceTz());
-    const upcoming = S.plans.filter((p) => p.date >= today).sort((a, b) => (a.date < b.date ? -1 : 1));
-    const earlier = S.plans.filter((p) => p.date < today).sort((a, b) => (a.date < b.date ? 1 : -1));
-    const row = (p) => `<button type="button" class="plan-row" data-act="plan-open" data-id="${esc(p.id)}"><span><span class="n">${esc(p.spot.name)}</span><br><span class="r">${esc(dayName(p.date, true))} ${esc(dateText(p.date))} · meet at ${esc(timeText(p.times.meetAt, p.tz))} · sunset ${esc(timeText(p.times.sunset, p.tz))}</span></span><span class="sp"></span><span aria-hidden="true">›</span></button>`;
-    return `<div class="row top"><button type="button" class="btn quiet back" data-act="close-view">‹ Back</button></div><section class="card"><p class="eyebrow">Plans</p>${upcoming.length ? upcoming.map(row).join('') : '<p class="empty">No plans yet. Pick an evening to start one.</p>'}</section>
+    const upcoming = S.plans.filter((p) => p.date >= addDays(today, -1)).sort((a, b) => (a.date < b.date ? -1 : 1));
+    const earlier = S.plans.filter((p) => p.date < addDays(today, -1)).sort((a, b) => (a.date < b.date ? 1 : -1));
+    const row = (pl) => {
+      const p = S.places.find((x) => x.id === pl.placeId) || null, hasPin = pl.spot.lat != null;
+      const ev = (p || hasPin) && pl.date >= today ? venueEvening(p, hasPin ? pl.spot : null, pl.date, pl.tz) : null, r = ev && ev.rating;
+      const chip = r ? `<span class="v ${r.verdict}">${icon(r)}${answerShort(r)}</span>` : '';
+      const changed = changeText(pl.scoreAtSave, r);
+      return `<button type="button" class="plan-row" data-act="plan-open" data-id="${esc(pl.id)}"><span><span class="n">${esc(pl.spot.name || 'No place yet')}</span><br>
+        <span class="r">${esc(dayName(pl.date, true))} ${esc(dateText(pl.date))}${pl.times ? ` · be there by ${esc(timeText(pl.times.meetAt, pl.tz))} · sunset ${esc(timeText(pl.times.sunset, pl.tz))}` : ''}</span>
+        ${changed ? `<br><span class="r chg">${esc(changed)}</span>` : ''}</span><span class="sp"></span>${chip}<span aria-hidden="true">›</span></button>`;
+    };
+    return `<div class="row top"><h1>Plans</h1><span class="sp"></span><button type="button" class="btn white" data-act="plan-new">New plan</button></div>
+      <section class="card">${upcoming.length ? upcoming.map(row).join('') : '<p class="empty">No plans yet. Start one here, or from Today.</p>'}</section>
       ${earlier.length ? `<section class="card"><p class="eyebrow">Earlier</p>${earlier.map(row).join('')}</section>` : ''}`;
   }
 
   const TYPES = { outdoor: 'Park, field or open ground', water: 'Beach, pier or waterside', peak: 'Summit or viewpoint', venue: 'Restaurant or bar' };
 
-  /** Everything the Plan screen shows, worked out from the draft and the forecast. */
+  /** Everything the Plan screen shows, worked out from the draft and the forecast at the venue. */
   function planModel(dr) {
-    const p = S.places.find((x) => x.id === dr.placeId) || (dr.saved ? null : place());
-    const evs = p ? evenings(p, { spotType: dr.spot.type }) : [];
-    const ev = evs.find((e) => e.date === dr.date) || null;
-    const hasPin = dr.spot.lat != null;
-    const at = hasPin ? dr.spot : p;
-    const [y, m, d] = ymd(dr.date);
-    const times = G.eveningTimes(G.solarNoonGuess(y, m + 1, d, at.lon), at.lat, at.lon);
+    const p = S.places.find((x) => x.id === dr.placeId) || null;
+    const hasPin = dr.spot.lat != null, tz = p ? p.tz : dr.tz;
+    const ev = p || hasPin ? venueEvening(p, hasPin ? dr.spot : null, dr.date, tz) : null;
+    const times = ev ? ev.times : null, r = ev ? ev.rating : null;
     const km = hasPin && dr.start ? G.distance(dr.start.lat, dr.start.lon, dr.spot.lat, dr.spot.lon) / 1000 : 0;
-    const travel = G.travelMinutes(km);
-    const r = ev && ev.rating;
+    const travel = dr.travelMin != null ? dr.travelMin : G.travelMinutes(km);
     const buffer = G.bufferMinutes(r ? r.score : 0, weekdayOf(dr.date));
-    const pt = G.planTimes(times, { walkIn: dr.walkIn, travel, buffer });
+    let meetAt = clockOn(dr.date, dr.arriveBy, tz);
+    if (meetAt != null && times && times.sunset != null && (meetAt > times.sunset || meetAt < times.sunset - 8 * HOUR)) meetAt = null;   // an arrive-by after sunset is no plan
+    const pt = times ? G.planTimes(times, { walkIn: dr.walkIn, travel, buffer, meetAt }) : null;
     const items = r && pt ? G.mergeItems(dr.items, G.bringList(ev.x, r.detail, { spotType: dr.spot.type, walkIn: dr.walkIn, times: pt, imperialFirst: settings.imperialFirst })) : (dr.items || []);
-    return { p, ev, r, times, km, travel, buffer, pt, items, hasPin, tz: p ? p.tz : dr.tz };
+    return { p, ev, r, times, km, travel, buffer, pt, items, hasPin, tz, startBack: pt ? G.startBackBy(pt, dr.walkIn) : null };
   }
 
   function timeline(pt, tz, opts) {
     const o = opts || {};
     const row = (cls, ms, title, sub) => `<div class="tl ${cls}"><span class="t num">${esc(timeText(ms, tz))}</span><span class="dot"></span><span class="what"><b>${title}</b><span>${sub}</span></span></div>`;
+    const start = pt.headBackBy - (o.walkIn || 0) * MIN;
     return `<div class="timeline">
       ${o.leave ? row('', pt.leaveBy, 'Leave by', o.leave) : ''}
-      ${row('', pt.meetAt, 'Meet at the spot', 'Settled 20 minutes before the best light')}
+      ${row('', pt.meetAt, 'Be there by', o.own ? 'The time you set' : 'Settled 20 minutes before the best light')}
       ${row('sun', pt.sunset, 'Sunset', 'Stay: the best colour often comes after the sun is down')}
       ${row('', pt.stayUntil, 'Afterglow ends', o.twilight ? 'Twilight lasts all night here' : 'The last of the colour')}
-      ${row('', pt.headBackBy, 'Head back by', o.twilight ? 'It stays light' : 'Last light')}
+      ${row('', start, 'Start back by', o.twilight ? 'It stays light' : `To be back before dark at ${esc(timeText(pt.headBackBy, tz))}`)}
     </div>`;
   }
 
-  function afterDark(model, walkIn, lat, lon, pt, tz) {
-    const moon = G.moonAt(pt.headBackBy, lat, lon), pct = Math.round(moon.fraction * 100);
+  const smsUrl = (text) => `sms:${/iPhone|iPad|Macintosh/.test(navigator.userAgent) ? '&' : '?'}body=${encodeURIComponent(text)}`;
+  /** Getting home: when to start back, what the walk is like, and a message for someone who should know. */
+  function gettingHome(o) {
+    const { pt, tz, walkIn, spot, twilight, date } = o, f = (ms) => esc(timeText(ms, tz));
+    const start = pt.headBackBy - (walkIn || 0) * MIN, moon = spot.lat != null ? G.moonAt(pt.headBackBy, spot.lat, spot.lon) : null;
+    const lead = twilight ? 'It stays light all night at this time of year.' : walkIn > 0
+      ? `Start back by about ${f(start)} to reach your car before dark.` : `It is dark by ${f(pt.headBackBy)}.`;
     const facts = [];
-    facts.push(walkIn > 0 ? `The walk back is about ${walkIn} minute${walkIn === 1 ? '' : 's'}.` : 'No walk back to speak of.');
-    facts.push(model && model.times.state === 'twilight' ? 'Twilight lasts all night at this time of year.' : `Last light is at ${esc(timeText(pt.headBackBy, tz))}. After that it is dark.`);
-    facts.push(moon.up ? `The moon will be up when you leave (${esc(moon.name.toLowerCase())}, ${pct}% lit).` : `No moon in the sky when you leave (${esc(moon.name.toLowerCase())}).`);
-    return `<ul class="facts">${facts.map((f) => `<li><span>${f}</span></li>`).join('')}</ul>`;
+    if (!twilight) facts.push(walkIn > 0 ? `The walk back is about ${walkIn} minute${walkIn === 1 ? '' : 's'}, in twilight if you start by then. After ${f(pt.headBackBy)} it is dark.` : 'No walk back to speak of.');
+    if (moon) facts.push(moon.up ? `The moon will be up (${esc(moon.name.toLowerCase())}, ${Math.round(moon.fraction * 100)}% lit).` : 'No moon in the sky then.');
+    facts.push('Lighting not listed: the map can’t say if the way back is lit. Bring a light.');
+    if (o.homeBy != null && o.travel != null) {
+      const home = pt.headBackBy + o.travel * MIN;
+      if (home <= o.homeBy) facts.push(`Home by ${f(o.homeBy)} fits: starting back at ${f(start)} gets you home about ${f(home)}.`);
+      else { const need = o.homeBy - (o.travel + (walkIn || 0)) * MIN, gap = Math.round((pt.sunset - need) / MIN);
+        facts.push(`To be home by ${f(o.homeBy)}, start back by ${f(need)}: ${gap > 0 ? `${gap} minutes before the sun sets` : `${-gap} minutes after sunset`}.`); }
+    }
+    const name = spot.name || 'the sunset spot', where = spot.lat != null ? ` (https://maps.google.com/?q=${spot.lat},${spot.lon})` : '';
+    const going = `I’m watching the sunset at ${name}${where} on ${dayName(date, true)}. There by ${timeText(pt.meetAt, tz)}, starting back by ${timeText(start, tz)}. I’ll message when I’m home.`;
+    return `<section class="card home"><p class="eyebrow">${TI.moon}<span>Getting home</span></p><p class="lead">${lead}</p>
+      <ul class="facts" data-gap>${facts.map((x) => `<li><span>${x}</span></li>`).join('')}</ul>
+      <div class="row" data-gap><a class="btn white" href="${esc(smsUrl(going))}">Text a friend where I’ll be</a><a class="btn" href="${esc(smsUrl(`Home safe from the sunset at ${name}.`))}">I’m home</a></div>
+      <p class="small muted" data-gap>Times are estimates. We never say a place is lit or safe.</p></section>`;
   }
 
   function planView() {
-    const dr = S.view.draft, mo = planModel(dr), tz = mo.tz;
-    setSky(mo.r, mo.ev && mo.ev.x, (mo.p ? mo.p.id : 'plan') + dr.date);
-    const saved = !!dr.saved, past = mo.pt && now() > mo.pt.headBackBy + 6 * HOUR;
-    const dayLabel = `${dayName(dr.date, true)} ${dateText(dr.date)}`;
-    const score = mo.r ? `<span class="row">${stars(mo.r.tier === 'outlook' ? mo.r.shown : mo.r.score, mo.r.tier === 'outlook', true)}<b class="num">${scoreText(mo.r)}</b>${colourHtml(mo.r, true)}<span class="v ${mo.r.verdict}">${mo.r.verdictWord}</span><span class="small muted">${esc(mo.r.reason)}</span></span>` : '<span class="small muted">No rating for this evening yet.</span>';
-    const far = mo.hasPin && mo.p && G.distance(mo.p.lat, mo.p.lon, dr.spot.lat, dr.spot.lon) > 15000;
-    const head = `<button type="button" class="btn quiet back" data-act="close-view">‹ ${saved ? 'Plans' : 'Back'}</button>
-      <section class="hero"><p class="when">${esc(dayLabel)}</p><h2>${esc(dr.spot.name || 'A new plan')}</h2>
-      <p class="tagline">${mo.p ? `Forecast for ${esc(mo.p.name)}${far ? ', some distance from this spot' : ''}` : ''}</p></section>`;
+    const dr = S.view.draft, mo = planModel(dr), tz = mo.tz, p = mo.p;
+    setSky(mo.r, mo.ev && mo.ev.x, (p ? p.id : 'plan') + dr.date);
+    const today = localDate(now(), tz), past = mo.pt && now() > mo.pt.headBackBy + 6 * HOUR;
+    if (mo.r && dr.scoreAtSave == null) dr.scoreAtSave = mo.r.score;
+    const answer = mo.r ? `<p class="planans v ${mo.r.verdict}">${icon(mo.r)}<b>${esc(answerText(mo.ev))}</b></p><p class="small">${esc(mo.r.reason)}${mo.r.tier === 'outlook' ? ' Could change.' : ''}</p>`
+      : mo.ev && mo.ev.day > 5 ? '<p class="small">Times are exact. Colour can’t be forecast yet.</p>' : '<p class="small muted">No forecast for this evening yet.</p>';
+    const changed = changeText(dr.scoreAtSave, mo.r);
+    const better = changed && mo.r && mo.r.verdict !== 'go' && p ? nextGood(evenings(p), mo.ev) : null;
+    const head = `<div class="row top"><button type="button" class="btn quiet back" data-act="close-view">‹ Back</button></div>
+      <section class="hero planhero"><h2>${esc(dr.spot.name || 'A new plan')}</h2>
+      <p class="when"><label class="dateline"><span class="sr">Date</span><input type="date" id="planDate" value="${dr.date}" min="${past ? dr.date : today}" max="${addDays(today, 366)}"${past ? ' disabled' : ''}></label></p></section>`;
     const coords = mo.hasPin ? `${dr.spot.lat.toFixed(5)}, ${dr.spot.lon.toFixed(5)}` : '';
-    const mapCard = `<section class="card"><p class="eyebrow">The spot</p>
-      <div class="map" id="map"><div class="msg" id="mapMsg">Loading the map…</div></div>
-      ${past ? '' : `<div class="row" data-gap><button type="button" class="btn" data-act="pin-here">Pin my location</button>${mo.p ? `<button type="button" class="btn" data-act="pin-place">Pin ${esc(mo.p.name)}</button>` : ''}</div>
+    const placeCard = `<section class="card"><p class="eyebrow">The place</p>
+      ${past ? '' : `<div class="box vbox"><input id="venueQ" type="search" placeholder="Find a venue by name or address" autocomplete="off" aria-label="Find a venue by name or address" value="${esc(S.view.venueQ || '')}"></div>
+      <div class="results" id="venueResults" aria-live="polite"></div>`}
+      <div class="map" id="map" data-gap><div class="msg" id="mapMsg">Loading the map…</div></div>
+      ${past ? '' : `<div class="row" data-gap>${p ? `<button type="button" class="btn" data-act="plan-pick">Places near ${esc(p.name)}</button>` : ''}<button type="button" class="btn" data-act="pin-here">Pin my location</button></div>
       <div class="form" data-gap>
         <label class="wide">Name<input id="spotName" maxlength="60" value="${esc(dr.spot.name)}" placeholder="West ridge car park" autocomplete="off"></label>
         <label>Kind of place<select id="spotType">${Object.entries(TYPES).map(([k, v]) => `<option value="${k}"${dr.spot.type === k ? ' selected' : ''}>${v}</option>`).join('')}</select></label>
         <label>Walk in, minutes<input id="walkIn" type="number" inputmode="numeric" min="0" max="240" value="${dr.walkIn}"></label>
-        <label class="wide">Coordinates<input id="coords" value="${esc(coords)}" placeholder="Tap the map, or type 39.7392, -104.9903" autocomplete="off"></label>
+        <label>Be there by<input id="arriveBy" type="time" value="${esc(dr.arriveBy || (mo.pt ? hhmm(mo.pt.meetAt, tz) : ''))}"></label>
+        <label>Travel, minutes<input id="travelMin" type="number" inputmode="numeric" min="0" max="600" value="${mo.travel}"></label>
+        <label>Home by (optional)<input id="homeBy" type="time" value="${esc(dr.homeBy || '')}"></label>
+        <label>Coordinates<input id="coords" value="${esc(coords)}" placeholder="39.7392, -104.9903" autocomplete="off"></label>
+        <label class="wide">Note for whoever you share it with<input id="planNote" maxlength="200" value="${esc(dr.note || '')}" placeholder="Park in car park B" autocomplete="off"></label>
       </div>`}</section>`;
-    if (!mo.hasPin || !mo.pt) {
-      return `${head}<div class="two"><div class="col">${mapCard}</div><div class="col"><section class="card"><p class="eyebrow">The evening</p>${score}
-        <p data-gap>${mo.pt ? 'Drop a pin where you’ll watch from. The times, what to bring and the walk back fill in from there.' : 'No sunset here on this date.'}</p></section></div></div>`;
-    }
-    const leaveSub = `From ${esc(dr.start.label)}: about ${mo.travel} min${mo.km >= 0.2 ? ` (${dist(mo.km * 1.4)} by road, roughly)` : ''}, ${dr.walkIn} min walk in, ${mo.buffer} min to spare`;
-    const timesCard = `<section class="card"><p class="eyebrow">The evening</p>${score}<div data-gap>${timeline(mo.pt, tz, { leave: leaveSub, twilight: mo.times.state === 'twilight' })}</div>
-      <div class="row"><span class="small muted">Leaving from <b>${esc(dr.start.label)}</b>. Never shared.</span><span class="sp"></span>
-      <button type="button" class="btn quiet" data-act="start-here">Use my location</button>${mo.p && dr.start.kind !== 'place' ? `<button type="button" class="btn quiet" data-act="start-place">Use ${esc(mo.p.name)}</button>` : ''}</div>
-      <p class="small muted">Travel time is an estimate. Directions gives the real figure.</p></section>`;
+    if (!mo.pt) return `${head}<div class="two"><div class="col"><section class="card"><p class="eyebrow">The evening</p><p>No sunset here on this date.</p></section></div><div class="col">${placeCard}</div></div>`;
+    const leaveSub = dr.start ? `From ${esc(dr.start.label)}: about ${mo.travel} min${dr.travelMin != null ? '' : mo.km >= 0.2 ? ` (${dist(mo.km * 1.4)} by road, roughly)` : ''}, ${dr.walkIn} min walk in, ${mo.buffer} min to spare` : '';
+    const upd = p && DATA[p.id] && DATA[p.id].fetchedAt && DATA[p.id].source !== 'sample' ? timeText(DATA[p.id].fetchedAt, tz) : null;
+    const timesCard = `<section class="card"><p class="eyebrow">The evening</p>${answer}
+      ${changed ? `<p class="chg" role="note">${esc(changed)}${better ? ` ${esc(dayName(better.date, true))} looks better.` : ''}</p>` : ''}
+      ${mo.hasPin ? '' : '<p class="small muted">Times are for the town until you choose the place.</p>'}
+      <div data-gap>${timeline(mo.pt, tz, { leave: leaveSub, twilight: mo.times.state === 'twilight', walkIn: dr.walkIn, own: !!dr.arriveBy })}</div>
+      ${dr.start ? `<div class="row"><span class="small muted">Leaving from <b>${esc(dr.start.label)}</b>. Never shared.</span><span class="sp"></span>
+      <button type="button" class="btn quiet" data-act="start-here">Use my location</button>${p && dr.start.kind !== 'place' ? `<button type="button" class="btn quiet" data-act="start-place">Use ${esc(p.name)}</button>` : ''}</div>` : ''}
+      <p class="small muted">Travel time is an estimate.${mo.hasPin ? ` <a href="${esc(directionsUrl(dr.spot))}" target="_blank" rel="noopener">Check in Maps</a>.` : ''}</p></section>`;
+    const sent = dr.sent, moved = sent && mo.hasPin && (sent.meetAt !== mo.pt.meetAt || sent.date !== dr.date || sent.name !== dr.spot.name);
+    const actions = mo.hasPin ? `<section class="card acts"><div class="row"><button type="button" class="btn primary" data-act="share-go">${SP.share}${sent ? 'Share again' : 'Share'}</button>
+        ${moved ? `<button type="button" class="btn white" data-act="share-update">Send update</button>` : ''}
+        <button type="button" class="btn" data-act="calendar">Add to calendar</button><a class="btn" target="_blank" rel="noopener" href="${esc(directionsUrl(dr.spot))}">Directions</a></div>
+        <p class="small muted" data-gap>Sharing sends a picture and a link. Anyone with the link sees the place, the times and your note, never where you’re leaving from.</p>
+        <div class="row" data-gap><span class="small muted">Saved on this device.</span><span class="sp"></span><button type="button" class="btn quiet danger" data-act="plan-del">Delete plan</button></div></section>`
+      : `<section class="card acts"><p>Choose the place to share this plan.</p><div class="row" data-gap><span class="sp"></span><button type="button" class="btn quiet danger" data-act="plan-del">Delete plan</button></div></section>`;
     const items = mo.items;
     const bring = `<section class="card"><p class="eyebrow">What to bring</p><div class="items">${items.length ? items.map((it, i) => `<div class="item${it.done ? ' done' : ''}">
         <input type="checkbox" id="it${i}" data-act="tick" data-i="${i}"${it.done ? ' checked' : ''} aria-label="${esc(it.name)}">
         <label for="it${i}"><span class="n">${esc(it.name)}${it.isNew ? '<span class="new">New</span>' : ''}</span>${it.why ? `<br><span class="w">${esc(it.why)}</span>` : ''}</label>
         <span class="row"><input class="who" data-act-input="who" data-i="${i}" maxlength="24" value="${esc(it.who || '')}" placeholder="Who?" aria-label="Who brings ${esc(it.name)}">${it.custom ? `<button type="button" class="x" data-act="item-del" data-i="${i}" aria-label="Remove ${esc(it.name)}">×</button>` : ''}</span></div>`).join('') : '<p class="small muted">Nothing special needed.</p>'}</div>
       <div class="additem"><input id="newItem" maxlength="40" placeholder="Add your own" aria-label="Add your own item"><button type="button" class="btn" data-act="item-add">Add</button></div></section>`;
-    const dark = `<section class="card"><p class="eyebrow">After dark</p>${afterDark(mo, dr.walkIn, dr.spot.lat, dr.spot.lon, mo.pt, tz)}</section>`;
-    let actions;
-    if (S.view.sharing) actions = `<section class="notice" id="shareNotice"><p><b>Anyone with this link can see the place, time and names.</b> It never includes where you’re leaving from.</p><div class="row"><button type="button" class="btn primary" data-act="share-go">Share link</button><button type="button" class="btn" data-act="share-cancel">Cancel</button></div></section>`;
-    else if (saved) actions = `<section class="card"><div class="row"><button type="button" class="btn primary" data-act="share">Share</button><button type="button" class="btn" data-act="calendar">Add to calendar</button><a class="btn" target="_blank" rel="noopener" href="${esc(directionsUrl(dr.spot))}">Directions</a><span class="sp"></span><button type="button" class="btn quiet danger" data-act="plan-del">Delete</button></div></section>`;
-    else actions = `<div class="cta"><button type="button" class="btn primary" data-act="plan-save"${db.isBlocked() ? ' disabled' : ''}>Save plan</button></div>`;
-    return `${head}<div class="two"><div class="col">${mapCard}${actions}</div><div class="col">${timesCard}${bring}${dark}</div></div>`;
+    const home = gettingHome({ pt: mo.pt, tz, walkIn: dr.walkIn, spot: mo.hasPin ? dr.spot : { name: dr.spot.name, lat: null }, twilight: mo.times.state === 'twilight', date: dr.date,
+      homeBy: clockOn(dr.date, dr.homeBy, tz), travel: mo.travel });
+    preparePlanCard();
+    return `${head}<div class="two"><div class="col">${timesCard}${actions}${home}</div><div class="col">${placeCard}${lightCard(mo.ev, tz, upd)}${bring}</div></div>`;
   }
 
   function directionsUrl(spot) {
@@ -1029,16 +1284,18 @@
     const names = Array.from(groups.keys()).sort((a, b) => (a === '' ? 1 : b === '' ? -1 : a.localeCompare(b)));
     const live = v.live;
     const dropped = live && pl.scoreAtSave != null && pl.scoreAtSave >= 3.5 && live.verdict !== 'go';
-    const scoreLine = live ? `<span class="row">${stars(live.tier === 'outlook' ? live.shown : live.score, live.tier === 'outlook', true)}<b class="num">${scoreText(live)}</b>${colourHtml(live, true)}<span class="v ${live.verdict}">${live.verdictWord}</span><span class="small muted">${esc(live.reason)}</span></span>`
-      : pl.scoreAtSave != null ? `<span class="small muted">Rated ${pl.scoreAtSave.toFixed(1)} of 5 when this plan was made.</span>` : '';
+    const scoreLine = live ? `<p class="planans v ${live.verdict}">${icon(live)}<b>${answerShort(live)}</b></p><p class="small">${esc(live.reason)}</p>`
+      : pl.scoreAtSave != null ? `<p class="small muted">${G.answerOf(pl.scoreAtSave) === 'go' ? 'It looked good' : G.answerOf(pl.scoreAtSave) === 'maybe' ? 'It looked possible' : 'It didn’t look promising'} when this plan was made.</p>` : '';
     return `<section class="hero"><p class="when">${esc(dayName(pl.date, true))} ${esc(dateText(pl.date))}</p><h2>${esc(pl.spot.name || 'Sunset')}</h2><p class="tagline">A sunset plan, shared with you</p></section>
+      ${pl.changed ? `<div class="warn chgd" role="note">${ICON.warn}<span>Changed: ${esc(pl.changed)}.</span></div>` : ''}
       ${dropped ? `<div class="warn" role="note">${ICON.warn}<span>The forecast has dropped since this plan was made. Check with whoever sent you this.</span></div>` : ''}
       <div class="two"><div class="col">
-        <section class="card"><p class="eyebrow">The spot</p><div class="map" id="map"><div class="msg" id="mapMsg">Loading the map…</div></div>
+        <section class="card"><p class="eyebrow">The evening</p>${scoreLine}<div data-gap>${timeline(pl.times, tz, { twilight: times.state === 'twilight', walkIn: pl.walkIn })}</div>
+          ${pl.note ? `<p class="note" data-gap>${esc(pl.note)}</p>` : ''}</section>
+        <section class="card"><p class="eyebrow">The place</p><div class="map" id="map"><div class="msg" id="mapMsg">Loading the map…</div></div>
           <div class="row" data-gap><a class="btn primary" target="_blank" rel="noopener" href="${esc(directionsUrl(pl.spot))}">Directions</a><button type="button" class="btn" data-act="calendar">Add to calendar</button></div></section>
-        <section class="card"><p class="eyebrow">After dark</p>${afterDark({ times }, pl.walkIn, pl.spot.lat, pl.spot.lon, pl.times, tz)}<p class="small muted" data-gap>Based on the sun and moon for this spot.</p></section>
       </div><div class="col">
-        <section class="card"><p class="eyebrow">The evening</p>${scoreLine}<div data-gap>${timeline(pl.times, tz, { twilight: times.state === 'twilight' })}</div></section>
+        ${gettingHome({ pt: pl.times, tz, walkIn: pl.walkIn, spot: pl.spot, twilight: times.state === 'twilight', date: pl.date })}
         <section class="card"><p class="eyebrow">What to bring</p>${pl.items.length ? `<div class="group">${names.map((n) => `<h3>${n ? esc(n) : names.length > 1 ? 'Anyone' : 'Bring'}</h3><ul>${groups.get(n).map((i) => `<li>${esc(i)}</li>`).join('')}</ul>`).join('')}</div>` : '<p class="small muted">Nothing listed.</p>'}</section>
         <section class="card"><p class="small muted">Plan as of ${pl.sharedAt ? `${esc(timeText(pl.sharedAt, tz))} on ${esc(new Intl.DateTimeFormat(navigator.language || 'en-US', { timeZone: tz, month: 'short', day: 'numeric' }).format(pl.sharedAt))}` : 'when it was shared'}. Times are local to the spot.</p>
           <div class="row" data-gap><a class="btn" href="./">Make my own plan</a></div></section>
@@ -1079,15 +1336,17 @@
   function mountMap() {
     const slot = $('#map');
     if (!slot) return;
-    const v = S.view, shared = v.type === 'shared' || v.type === 'spot';
-    const spot = v.type === 'shared' ? (v.plan && v.plan.spot) : v.type === 'spot' ? v.spot : v.draft.spot;
+    const v = S.sheet && S.sheet.kind === 'spot' ? S.sheet : S.view;
+    if (!v) return;
+    const shared = v.type === 'shared' || v.kind === 'spot';
+    const spot = v.type === 'shared' ? (v.plan && v.plan.spot) : v.kind === 'spot' ? v.spot : v.draft.spot;
     if (shared && !spot) return;
     if (!v.key) v.key = ++viewSeq;
     if (mapEl && mapKey === v.key) { slot.replaceWith(mapEl); if (map) { map.resize(); syncMarker(spot, shared); } return; }
     if (map) { try { map.remove(); } catch { /* already gone */ } }
     map = null; marker = null; mapEl = slot; mapKey = v.key;
     const p = place(), centre = spot && spot.lat != null ? [spot.lon, spot.lat] : [p.lon, p.lat];
-    const failed = shared ? 'The map couldn’t load. Directions still works.' : 'The map couldn’t load. Type coordinates or pin your location.';
+    const failed = shared ? 'The map couldn’t load. Directions still works.' : 'The map couldn’t load. Search for the venue, or type coordinates.';
     if (!navigator.onLine) return mapFallback('The map needs a connection. The plan itself is saved.');
     const key = v.key;
     loadMapLib().then((ml) => {
@@ -1101,7 +1360,7 @@
       mine.on('error', () => { if (map === mine && !mine.isStyleLoaded()) { try { mine.remove(); } catch { /* gone */ } map = null; marker = null; mapFallback(failed); } });
       syncMarker(spot, shared);
       if (!shared) mine.on('click', (e) => setPin(e.lngLat.lat, e.lngLat.lng));
-    }).catch(() => { if (mapKey === key) mapFallback(failed); });
+    }).catch(() => { note('Map', false, 'the map could not load'); if (mapKey === key) mapFallback(failed); });
   }
   /** The map as an image, with its credit, to keep with the plan for offline. */
   function mapSnapshot() {
@@ -1122,7 +1381,6 @@
   }
 
   // ---------- Golden Hour Places: where to go, near each location ----------
-  const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.private.coffee/api/interpreter'];
   const SPOT_TTL = 14 * DAY;
   const CATS = [
     { key: 'easy', title: 'Landmarks', sub: 'Well-known spots, easy to reach', icon: 'landmark' },
@@ -1178,26 +1436,45 @@
   })();
 
   /** Finds the Golden Hour Places around a location, once a fortnight. */
+  /** Finds the places around a location, once a fortnight. It never waits on the forecast, a failure is never
+      remembered, and "Looking for places…" shows meanwhile. */
   async function loadSpots(p) {
     const d = DATA[p.id] || (DATA[p.id] = { prev: {}, snaps: {} });
-    if (p.sample) { d.spots = finishSample(p); return; }
+    if (p.sample) { d.spots = finishSample(p); d.near = sampleNear(); return; }
     if (d.spots && d.spots !== 'error') return;
     if (d.spotsLoading) return d.spotsLoading;
+    d.spotsTriedAt = now(); d.spots = null;
     d.spotsLoading = (async () => {
-      const q = G.spotsQuery(Math.round(p.lat * 100) / 100, Math.round(p.lon * 100) / 100);
-      let body = null;
-      for (const base of OVERPASS) {
-        try { body = (await getJSON(`${base}?data=${encodeURIComponent(q)}`, SPOT_TTL, 0, false)).body; break; } catch { /* try the next */ }
-      }
-      if (!body) { d.spots = 'error'; return; }
-      const evs = evenings(p), az = evs[0].times.azimuth;
-      d.spots = G.rankSpots(body.elements, { lat: p.lat, lon: p.lon, elevation: d.elevation == null ? null : d.elevation, facing: az });
+      try {
+        const body = await overpass(G.spotsQuery(Math.round(p.lat * 100) / 100, Math.round(p.lon * 100) / 100), 'Places', SPOT_TTL);
+        d.spotsRaw = body.elements;
+        rankInto(p);
+        loadNear(p).then(() => update(p));
+      } catch { d.spots = 'error'; }
     })();
     try { await d.spotsLoading; } finally { d.spotsLoading = null; }
+  }
+  function rankInto(p) {
+    const d = DATA[p.id];
+    d.spots = G.rankSpots(d.spotsRaw, { lat: p.lat, lon: p.lon, elevation: d.elevation == null ? null : d.elevation, facing: evenings(p)[0].times.azimuth });
+  }
+  /** Parking and toilets within a short walk of the places most likely to be shown: a second, small lookup. */
+  async function loadNear(p) {
+    const d = DATA[p.id], s = allSpots(p);
+    if (!s || (d.near && d.near !== 'error') || d.nearLoading) return;
+    const list = [...ownSpots(p).slice(0, 6), ...s.easy.slice(0, 14), ...s.dining.slice(0, 14), ...s.adventurous.slice(0, 6)];
+    if (!list.length) { d.near = {}; return; }
+    d.nearLoading = true;
+    try { d.near = G.matchNear(list, (await overpass(G.nearQuery(list), 'Parking and toilets', SPOT_TTL, true)).elements); } catch { d.near = 'error'; } finally { d.nearLoading = false; }
   }
   function finishSample(p) {
     const out = {};
     for (const [k, list] of Object.entries(SAMPLE_SPOTS)) out[k] = list.map((s) => { const km = G.distance(p.lat, p.lon, s.lat, s.lon) / 1000; return { effort: k === 'easy' ? 'easy' : s.effort, ...s, km, travel: G.travelMinutes(km) }; });
+    return out;
+  }
+  function sampleNear() {
+    const out = {};
+    for (const list of Object.values(SAMPLE_SPOTS)) list.forEach((s, i) => { out[s.id] = { parking: s.cat !== 'adventurous' || i === 0, toilets: s.cat === 'dining' || i % 2 === 0 }; });
     return out;
   }
   /** Your own spots near a location (within 100 km). */
@@ -1209,113 +1486,100 @@
     for (const list of s ? Object.values(s) : []) { const hit = list.find((x) => x.id === id); if (hit) return hit; }
     return ownSpots(p).find((x) => x.id === id) || null;
   }
+  /** What the map says is within a short walk of a place: {parking, toilets}, or null when it wasn't checked. */
+  function nearOf(p, s) { const d = DATA[p.id] || {}; return d.near && typeof d.near === 'object' ? d.near[s.id] || null : null; }
+  function nearText(p, s) {
+    const d = DATA[p.id] || {}, n = nearOf(p, s);
+    if (d.near === 'error') return 'Parking and toilets: couldn’t check.';
+    if (!n) return d.nearLoading ? 'Checking for parking and toilets…' : '';
+    if (n.parking && n.toilets) return 'Parking and toilets nearby.';
+    if (n.parking) return 'Parking nearby. Toilets not listed.';
+    if (n.toilets) return 'Toilets nearby. Parking not listed.';
+    return 'Parking and toilets not listed.';
+  }
 
   const away = (s) => `${s.km < 0.2 ? 'Here' : `${esc(G.distanceText(s.km, settings.imperialFirst, true))} · about ${s.travel} min`}`;
-  /** One row for a place: its picture, name, what it is, how far and how hard. */
   /** The place on Google Maps, to see photos and what kind of place it is. Opens Google; nothing is sent until tapped. */
   function mapsUrl(s, p) {
     const named = s.cat !== 'own' && s.name;
     const q = named ? [s.name, p && p.name, p && p.region].filter(Boolean).join(', ') : `${s.lat},${s.lon}`;
     return 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(q);
   }
-  /** Straight under the rating: ideas for where to go, to swipe through. Your own spots first, then the
-      top of each kind in turn. */
-  function placesStrip(p) {
-    const s = allSpots(p), d = DATA[p.id] || {}, mine = ownSpots(p);
-    if (!s && d.spots === 'error' && !mine.length) return '';
-    const head = `<div class="striphead"><h3>Where to watch</h3><button type="button" class="link" data-act="spots-all" data-place="${esc(p.id)}">See all</button></div>`;
-    if (!s && !mine.length) return `<section class="strip" aria-label="Where to watch" aria-busy="true">${head}<div class="striprow">${'<span class="scard bone"></span>'.repeat(3)}</div></section>`;
-    const picks = mine.slice(0, 2);
-    if (s) for (let i = 0; i < 3; i++) for (const c of CATS) if (s[c.key][i]) picks.push(s[c.key][i]);
-    if (!picks.length) return '';
-    const card = (x) => {
-      const effort = x.cat === 'own' ? 'Your spot' : x.cat === 'dining' ? 'May need a booking' : EFFORT[x.effort] || '';
-      return `<button type="button" class="scard a-${x.cat}" data-act="spot-open" data-id="${esc(x.id)}" data-place="${esc(p.id)}">
-        <span class="sbadge c-${x.cat} k-${kindIconName(x)}" aria-hidden="true">${kindIcon(x)}</span>
-        <span class="n">${esc(x.name)}</span><span class="r">${esc(x.kind || G.SPOT_CAT[x.cat] || '')} · ${away(x)}</span>
-        <span class="e e-${esc(x.cat === 'own' ? 'own' : x.effort || 'own')}">${esc(effort)}</span></button>`;
-    };
-    return `<section class="strip" aria-label="Where to watch">${head}<div class="striprow" tabindex="0">${picks.map(card).join('')}</div></section>`;
-  }
-  function spotRow(s, p, i) {
-    const effort = s.cat === 'own' ? 'Your spot' : s.cat === 'dining' ? 'May need a booking' : EFFORT[s.effort] || '';
-    return `<button type="button" class="srow" data-act="spot-open" data-id="${esc(s.id)}" data-place="${esc(p.id)}">
+  const effortWord = (s) => (s.cat === 'own' ? 'Your spot' : s.cat === 'dining' ? 'May need a booking' : EFFORT[s.effort] || '');
+  /** One row for a place: its picture, name, what it is, how far and how hard. Tapping opens it, or plans there. */
+  function spotRow(s, p, i, act, date, extra) {
+    return `<button type="button" class="srow" data-act="${act || 'spot-open'}" data-id="${esc(s.id)}" data-place="${esc(p.id)}"${date ? ` data-date="${date}"` : ''}>
       <span class="sbadge c-${s.cat} k-${kindIconName(s)}" aria-hidden="true">${kindIcon(s)}${i != null ? `<b class="rank">${i + 1}</b>` : s.cat === 'own' ? '<b class="rank own"><svg viewBox="0 0 40 40"><use href="#k-heart"/></svg></b>' : ''}</span>
-      <span class="sl"><span class="n">${esc(s.name)}</span><span class="r">${esc(s.kind || G.SPOT_CAT[s.cat] || '')} · ${away(s)}</span><span class="e e-${esc(s.cat === 'own' ? 'own' : s.effort || 'own')}">${esc(effort)}</span></span>
+      <span class="sl"><span class="n">${esc(s.name)}</span><span class="r">${esc(s.kind || G.SPOT_CAT[s.cat] || '')} · ${away(s)}</span>${extra ? `<span class="r near">${esc(extra)}</span>` : ''}<span class="e e-${esc(s.cat === 'own' ? 'own' : s.effort || 'own')}">${esc(effortWord(s))}</span></span>
       <span class="chev">${SP.chev}</span></button>`;
   }
-  /** At the foot of each location's page: the top three of each kind, and the way in to all of them. */
-  function placesSection(p) {
-    const s = allSpots(p), d = DATA[p.id] || {}, mine = ownSpots(p);
-    const head = `<div class="sechead"><h3>Golden Hour Places</h3><p>Where to watch from near ${esc(p.name)}</p></div>`;
-    let body;
-    if (!s && d.spots === 'error') body = `<section class="card"><p>Couldn’t load places near ${esc(p.name)}.</p><div class="row" data-gap><button type="button" class="btn" data-act="spots-retry">Try again</button></div></section>`;
-    else if (!s) body = `<section class="card skeleton" aria-busy="true"><p class="muted">Finding sunset places near ${esc(p.name)}…</p><div class="bone" data-w="70"></div><div class="bone" data-w="55"></div></section>`;
-    else body = '<div class="spotgrid">' + CATS.map((c) => {
-      const list = s[c.key].slice(0, 3);
-      return `<section class="card spotcard a-${c.key}"><p class="eyebrow">${SP[c.icon]}<span>${c.title}</span><span class="sp"></span><span class="aside">${s[c.key].length ? `Top ${list.length}` : ''}</span></p>
-        ${list.length ? list.map((x, i) => spotRow(x, p, i)).join('') : `<p class="small muted">None found nearby in open map data.</p>`}</section>`;
-    }).join('') + (mine.length ? `<section class="card spotcard a-own"><p class="eyebrow">${SP.heart}<span>Your spots</span></p>${mine.slice(0, 3).map((x) => spotRow(x, p)).join('')}</section>` : '') + '</div>';
-    return `<section class="ghplaces" aria-label="Golden Hour Places">${head}${body}
-      <div class="cta"><button type="button" class="btn white" data-act="spots-all" data-place="${esc(p.id)}">See all Golden Hour Places</button></div></section>`;
-  }
 
-  /** The full list, in four parts: landmarks, adventurous places, dining with a view, and your own. */
+  /** All the places near a location, in four parts, with three filters for what you need there. */
+  const FILTERS = [['parking', 'Parking'], ['toilets', 'Toilets'], ['walk', 'Short walk']];
+  function passes(p, s) {
+    const f = S.filters, n = nearOf(p, s);
+    return (!f.parking || !!(n && n.parking)) && (!f.toilets || !!(n && n.toilets)) && (!f.walk || WALK_OF_SPOT(s) <= 10);
+  }
   function spotsView() {
     const v = S.view, p = place(v.placeId), s = allSpots(p), mine = ownSpots(p), d = DATA[p.id] || {};
     skyOf(p);
+    const on = FILTERS.filter(([k]) => S.filters[k]), filtering = on.length > 0;
+    const wants = on.map(([, label]) => label.toLowerCase()).join(' and ');
+    const total = filtering && s ? [...mine, ...s.easy, ...s.dining, ...s.adventurous].filter((x) => passes(p, x)).length : 0;
+    const showNear = S.filters.parking || S.filters.toilets;
     const part = (c, list) => {
-      const open = v.expanded[c.key], shown = open ? list : list.slice(0, 5);
-      return `<section class="card spotcard a-${c.key}"><p class="eyebrow">${SP[c.icon]}<span>${c.title}</span></p><p class="catsub">${c.sub}</p>
-        ${shown.length ? shown.map((x, i) => spotRow(x, p, i)).join('') : '<p class="small muted">None found nearby in open map data.</p>'}
-        ${list.length > 5 ? `<button type="button" class="more" data-act="spots-more" data-k="${c.key}">${open ? 'Show fewer' : `Show ${list.length - 5} more`}</button>` : ''}</section>`;
+      const fit = filtering && total ? list.filter((x) => passes(p, x)) : list;
+      const open = v.expanded[c.key], shown = open ? fit : fit.slice(0, 5);
+      if (filtering && total && !fit.length) return '';
+      return `<section class="card spotcard a-${c.key}"><p class="eyebrow">${SP[c.icon]}<span>${c.title}</span></p><p class="catsub">${c.key === 'dining' ? 'From open map data, not checked. You may need to book' : c.sub}</p>
+        ${shown.length ? shown.map((x, i) => spotRow(x, p, i, null, null, showNear ? nearText(p, x) || 'Parking and toilets not checked.' : '')).join('') : '<p class="small muted">None found nearby in open map data.</p>'}
+        ${fit.length > 5 ? `<button type="button" class="more" data-act="spots-more" data-k="${c.key}">${open ? 'Show fewer' : `Show ${fit.length - 5} more`}</button>` : ''}</section>`;
     };
-    const lists = !s ? `<section class="card">${d.spots === 'error' ? `<p>Couldn’t load places near ${esc(p.name)}.</p><div class="row" data-gap><button type="button" class="btn" data-act="spots-retry">Try again</button></div>` : `<p class="muted">Finding sunset places near ${esc(p.name)}…</p>`}</section>`
-      : `<div class="spotgrid wide">${CATS.map((c) => part(c, s[c.key])).join('')}</div>`;
-    return `<div class="row top"><button type="button" class="btn quiet back" data-act="close-view">‹ ${esc(p.name)}</button><span class="sp"></span>
-        <button type="button" class="circle" data-act="share-app" aria-label="Share Golden Hour">${SP.share}</button></div>
-      <header class="screenhead"><h1>Golden Hour Places</h1><p>Where to watch the sunset near ${esc(p.name)}${p.sample ? ' (sample)' : ''}</p></header>
+    const chips = `<div class="chips" role="group" aria-label="Show places with">${FILTERS.map(([k, label]) => `<button type="button" class="chip" data-act="filter" data-k="${k}" aria-pressed="${!!S.filters[k]}">${label}</button>`).join('')}</div>`;
+    const none = filtering && s && !total ? `<p class="pstate" role="status">None listed with ${esc(wants)} here. These are the nearest places${showNear ? ', with what the map says about each' : ''}.</p>` : '';
+    const lists = !s ? `<section class="card">${placesState(p)}</section>` : `${none}<div class="spotgrid wide">${CATS.map((c) => part(c, s[c.key])).join('')}</div>`;
+    const myFit = filtering && total ? mine.filter((x) => passes(p, x)) : mine;
+    return `<div class="row top"><button type="button" class="btn quiet back" data-act="close-view">‹ ${esc(p.name)}</button></div>
+      <header class="screenhead"><h1>Places</h1><p>Where to watch the sunset near ${esc(p.name)}${p.sample ? ' (sample)' : ''}</p></header>
+      ${chips}${d.near === 'error' && showNear ? '<p class="pstate">Couldn’t check for parking and toilets. <button type="button" class="link" data-act="near-retry">Try again</button></p>' : ''}
       ${lists}
       <section class="card spotcard a-own"><p class="eyebrow">${SP.heart}<span>Your spots</span></p><p class="catsub">Places you love to watch from. Only on this device.</p>
-        ${mine.length ? mine.map((x) => spotRow(x, p)).join('') : '<p class="small muted">None yet.</p>'}
+        ${myFit.length ? myFit.map((x) => spotRow(x, p)).join('') : `<p class="small muted">${mine.length ? 'None of yours match.' : 'None yet.'}</p>`}
         <div class="row" data-gap><button type="button" class="btn white" data-act="spot-add" data-place="${esc(p.id)}">Add your own spot</button></div></section>
-      <p class="small credit">${p.sample ? 'Sample places. ' : ''}From OpenStreetMap: well-known places, and places named for the sunset, come first. Effort is estimated from how high a place is above ${esc(p.name)}.</p>`;
+      <p class="small credit">${p.sample ? 'Sample places. ' : ''}From OpenStreetMap, not checked by us: well-known places, and places named for the sunset, come first. Parking and toilets are those the map lists within a short walk.</p>`;
   }
 
-  /** One place, the whole screen: what it is, how to get there, tonight's sunset, and what to do next. */
-  function spotView() {
-    const v = S.view, p = place(v.placeId) || place(), sp = v.spot, own = sp.cat === 'own', saved = S.spots.some((x) => x.id === sp.id || (Math.abs(x.lat - sp.lat) < 1e-4 && Math.abs(x.lon - sp.lon) < 1e-4));
+  /** One place, in a sheet: what it is, what's there, how to get there, and the way to plan the evening. */
+  function spotSheet() {
+    const sh = S.sheet, p = place(sh.placeId) || place(), sp = sh.spot, own = sp.cat === 'own', saved = S.spots.some((x) => x.id === sp.id || (Math.abs(x.lat - sp.lat) < 1e-4 && Math.abs(x.lon - sp.lon) < 1e-4));
     const km = G.distance(p.lat, p.lon, sp.lat, sp.lon) / 1000, travel = G.travelMinutes(km), ev = shownEvening(p), r = ev.rating;
-    setSky(r, ev.x, p.id + ev.date);
-    const effort = own ? 'Your spot' : sp.cat === 'dining' ? 'May need a booking' : EFFORT[sp.effort] || '';
     const facts = [];
     facts.push(`${km < 0.2 ? 'Right here' : `${esc(G.distanceText(km, settings.imperialFirst))} from ${esc(p.name)}, about ${travel} min by car`}.`);
-    if (sp.ele != null) facts.push(`Elevation ${Math.round(sp.ele * 3.28084).toLocaleString('en-US')} ft · ${Math.round(sp.ele).toLocaleString('en-US')} m${sp.gain != null ? `, ${Math.round(sp.gain * 3.28084).toLocaleString('en-US')} ft · ${Math.round(sp.gain).toLocaleString('en-US')} m above ${esc(p.name)}` : ''}.`);
+    const near = nearText(p, sp);
+    if (near) facts.push(esc(near));
+    if (sp.wheelchair === 'yes') facts.push('Step-free access.'); else if (sp.wheelchair === 'no') facts.push('Not step-free.');
+    if (sp.dog === 'yes') facts.push('Dogs allowed.'); else if (sp.dog === 'no') facts.push('No dogs.');
+    if (sp.fee === 'yes') facts.push('There may be a fee.');
+    if (sp.hours) facts.push(`Hours: ${esc(sp.hours)}. Check before you go.`);
+    else if (sp.cat === 'dining') facts.push('Opening hours not listed. Check before you go.');
+    if (sp.ele != null && sp.gain != null && sp.gain > 50) facts.push(`${Math.round(sp.gain * 3.28084).toLocaleString('en-US')} ft · ${Math.round(sp.gain).toLocaleString('en-US')} m above ${esc(p.name)}.`);
     if (sp.faces === true) facts.push('Faces the sunset.');
     if (sp.faces === false) facts.push('Faces away from the sunset: look for a clear view west.');
-    if (sp.hours) facts.push(`Hours: ${esc(sp.hours)}. Check before you go.`);
-    else if (sp.cat === 'dining') facts.push('Opening hours unknown. Check before you go, and book for an hour before sunset.');
-    if (sp.fee === 'yes') facts.push('There may be a fee.');
-    if (sp.dog === 'yes') facts.push('Dogs allowed.'); else if (sp.dog === 'no') facts.push('No dogs.');
-    if (sp.wheelchair === 'yes') facts.push('Step-free access.');
-    const tonight = r ? `<section class="card"><p class="eyebrow">${TI.colour}<span>${esc(evLabel(ev, p, evenings(p)))} here</span></p>
-        <div class="tonight"><span class="big num">${scoreText(r)}</span><span class="tl2">${stars(r.tier === 'outlook' ? r.shown : r.score, r.tier === 'outlook', true)}<b class="c-${r.colourClass.toLowerCase()}">${r.colourClass} colour</b><span class="v ${r.verdict}">${icon(r)}${r.verdictWord}</span></span></div>
-        <p class="small muted">Sunset ${esc(timeText(ev.times.sunset, p.tz))}. ${esc(r.reason)}${km > 15 ? ` Forecast for ${esc(p.name)}.` : ''}</p></section>` : '';
-    const links = [sp.website ? `<a class="btn" href="${esc(sp.website)}" target="_blank" rel="noopener">Website</a>` : '', sp.phone ? `<a class="btn" href="tel:${esc(sp.phone.replace(/[^\d+]/g, ''))}">Call to book</a>` : ''].join('');
-    return `<div class="row top"><button type="button" class="btn quiet back" data-act="close-view">‹ ${v.from === 'all' ? 'Golden Hour Places' : esc(p.name)}</button><span class="sp"></span>
-        <button type="button" class="circle" data-act="share-spot" aria-label="Share ${esc(sp.name)}">${SP.share}</button></div>
-      <section class="hero spothero"><span class="sbadge big c-${sp.cat} k-${kindIconName(sp)}" aria-hidden="true">${kindIcon(sp)}</span><h2>${esc(sp.name)}</h2><p class="when">${esc(sp.kind || G.SPOT_CAT[sp.cat] || 'Your spot')} · ${esc(effort)}</p>${v.shared ? '<p class="when">Shared with you</p>' : ''}</section>
-      <div class="cta row center"><button type="button" class="btn primary" data-act="spot-plan">Plan this evening here</button><a class="btn white" target="_blank" rel="noopener" href="${esc(directionsUrl(sp))}">${SP.car}Directions</a></div>
-      <div class="cta row center"><a class="btn glink" target="_blank" rel="noopener" href="${esc(mapsUrl(sp, p))}">${SP.landmark}Photos and reviews on Google Maps</a></div>
-      <div class="two"><div class="col">
-        <section class="card"><p class="eyebrow">${SP.landmark}<span>Where</span></p><div class="map" id="map"><div class="msg">Loading the map…</div></div></section>
-        ${tonight}
-      </div><div class="col">
-        <section class="card"><p class="eyebrow">${catIcon(sp.cat)}<span>About this place</span></p><ul class="facts">${facts.filter(Boolean).map((f) => `<li><span>${f}</span></li>`).join('')}</ul>
-          ${!own && !sp.sample ? `<p class="small muted" data-gap>${esc(G.spotReason(sp))}. From OpenStreetMap.</p>` : ''}${links ? `<div class="row" data-gap>${links}</div>` : ''}</section>
-        <section class="card"><div class="row"><button type="button" class="btn" data-act="share-spot">${SP.share}Share this place</button><span class="sp"></span>
-          ${own ? `<button type="button" class="btn quiet danger" data-act="spot-del">Remove</button>` : saved ? '<span class="small muted">In your spots</span>' : `<button type="button" class="btn" data-act="spot-save">${SP.heart}Save to your spots</button>`}</div></section>
-      </div></div>`;
+    if (ev.times.lastLight != null) facts.push(`${ev.day === 0 ? 'Tonight' : 'That evening'} it is dark by ${esc(timeText(ev.times.lastLight, p.tz))}. Lighting not listed.`);
+    const tonight = r ? `<p class="planans v ${r.verdict}">${icon(r)}<b>${esc(answerText(ev))}</b></p><p class="small">Sunset ${esc(timeText(ev.times.sunset, p.tz))}, be there by ${esc(timeText(ev.times.bestStart - 20 * MIN, p.tz))}.${km > 15 ? ` Forecast for ${esc(p.name)}; a plan uses the forecast here.` : ''}</p>` : '';
+    const links = [sp.website ? `<a class="btn" href="${esc(sp.website)}" target="_blank" rel="noopener">Website</a>` : '', sp.phone ? `<a class="btn" href="tel:${esc(sp.phone.replace(/[^\d+]/g, ''))}">Call</a>` : ''].join('');
+    const canPlan = now() < endOf(ev, p);
+    return `<div class="sh-head"><button type="button" class="done" data-act="sheet-close">Done</button><h2 id="sheetTitle">${esc(sp.kind || G.SPOT_CAT[sp.cat] || 'Your spot')}</h2>
+        <span class="nav"><button type="button" class="circle sm" data-act="share-spot" aria-label="Share ${esc(sp.name)}">${SP.share}</button></span></div>
+      <section class="hero spothero"><span class="sbadge big c-${sp.cat} k-${kindIconName(sp)}" aria-hidden="true">${kindIcon(sp)}</span><h2>${esc(sp.name)}</h2><p class="when">${esc(effortWord(sp))}${sh.shared ? ' · Shared with you' : ''}</p></section>
+      ${tonight ? `<section class="card">${tonight}</section>` : ''}
+      <div class="cta row center">${canPlan ? `<button type="button" class="btn primary" data-act="spot-plan">Plan ${esc(planWord(ev))} here</button>` : ''}<a class="btn white" target="_blank" rel="noopener" href="${esc(directionsUrl(sp))}">${SP.car}Directions</a></div>
+      <section class="card"><p class="eyebrow">${catIcon(sp.cat)}<span>Know before you go</span></p><ul class="facts">${facts.filter(Boolean).map((f) => `<li><span>${f}</span></li>`).join('')}</ul>
+        ${!own && !sp.sample ? `<p class="small muted" data-gap>${esc(G.spotReason(sp))}. From open map data, not checked.</p>` : ''}
+        <div class="row" data-gap><a class="btn glink" target="_blank" rel="noopener" href="${esc(mapsUrl(sp, p))}">Photos and reviews on Google Maps</a>${links}</div></section>
+      <section class="card"><p class="eyebrow">${SP.landmark}<span>Where</span></p><div class="map" id="map"><div class="msg">Loading the map…</div></div></section>
+      <section class="card"><div class="row"><button type="button" class="btn" data-act="share-spot">${SP.share}Share this place</button><span class="sp"></span>
+        ${own ? `<button type="button" class="btn quiet danger" data-act="spot-del">Remove</button>` : saved ? '<span class="small muted">In your spots</span>' : `<button type="button" class="btn" data-act="spot-save">${SP.heart}Save to your spots</button>`}</div></section>`;
   }
 
   /** Add your own spot: a name, a kind, and a pin. */
@@ -1323,7 +1587,7 @@
     const v = S.view, dr = v.draft, p = place(v.placeId);
     skyOf(p);
     const coords = dr.spot.lat != null ? `${dr.spot.lat.toFixed(5)}, ${dr.spot.lon.toFixed(5)}` : '';
-    return `<div class="row top"><button type="button" class="btn quiet back" data-act="close-view">‹ Golden Hour Places</button></div>
+    return `<div class="row top"><button type="button" class="btn quiet back" data-act="close-view">‹ Back</button></div>
       <header class="screenhead"><h1>Your own spot</h1><p>Somewhere you love to watch the sunset</p></header>
       <section class="card"><div class="map" id="map"><div class="msg">Loading the map…</div></div>
         <div class="row" data-gap><button type="button" class="btn" data-act="pin-here">Pin my location</button></div>
@@ -1338,88 +1602,137 @@
   const TYPE_OF_SPOT = (s) => (s.cat === 'dining' ? 'venue' : s.kind === 'Beach' || s.kind === 'Pier' ? 'water' : s.cat === 'adventurous' || s.kind === 'Viewpoint' ? 'peak' : s.type || 'outdoor');
   const WALK_OF_SPOT = (s) => (s.cat === 'dining' ? 0 : s.effort === 'high' ? 45 : s.effort === 'medium' ? 20 : 5);
 
-  // ---------- Sharing: today's sunset, a place, the app ----------
+  // ---------- Sharing: today's sunset, the week, a plan, a place, the app ----------
   const appUrl = () => location.origin + location.pathname;
+  /** Opens the share sheet straight from the tap. → true when it was shared or copied, false when cancelled. */
   async function shareOut(o) {
     try {
-      if (o.file && navigator.canShare && navigator.canShare({ files: [o.file] })) { await navigator.share({ files: [o.file], title: o.title, text: `${o.text}\n${o.url}` }); return; }
-      if (navigator.share) { await navigator.share({ title: o.title, text: o.text, url: o.url }); return; }
-    } catch (e) { if (e && e.name === 'AbortError') return; }
-    try { await navigator.clipboard.writeText(`${o.text}\n${o.url}`); toast('Copied to share'); } catch { window.prompt('Copy and share', `${o.text}\n${o.url}`); }
+      if (o.file && navigator.canShare && navigator.canShare({ files: [o.file] })) { await navigator.share({ files: [o.file], title: o.title, text: `${o.text}\n${o.url}` }); return true; }
+      if (navigator.share) { await navigator.share({ title: o.title, text: o.text, url: o.url }); return true; }
+    } catch (e) { if (e && e.name === 'AbortError') return false; }
+    try { await navigator.clipboard.writeText(`${o.text}\n${o.url}`); toast('Copied, ready to paste'); return true; } catch { window.prompt('Copy and share', `${o.text}\n${o.url}`); return true; }
   }
-  /** Today's sunset as a picture: the evening's sky, the score, and the times, ready for a message. */
-  async function sunsetCard(p, ev) {
-    const r = ev.rating, W = 1080, H = 1350, c = document.createElement('canvas');
+  /** A picture for a message: the evening's sky with a few lines of large type on it. */
+  async function drawCard(r, name, paint) {
+    const W = 1080, H = 1350, c = document.createElement('canvas');
     c.width = W; c.height = H;
     const g = c.getContext('2d'), stops = skyStops(r), grad = g.createLinearGradient(0, 0, 0, H);
     [0, 0.46, 0.72, 0.9, 1].forEach((o, i) => grad.addColorStop(o, stops[i]));
     g.fillStyle = grad; g.fillRect(0, 0, W, H);
     if (r && !r.cap) { const rg = g.createRadialGradient(W / 2, H * 0.96, 0, W / 2, H * 0.96, 420); rg.addColorStop(0, 'rgba(255,240,200,.9)'); rg.addColorStop(0.25, 'rgba(255,214,150,.5)'); rg.addColorStop(1, 'rgba(255,190,120,0)'); g.fillStyle = rg; g.fillRect(0, 0, W, H); }
-    try { await document.fonts.load('200 100px Inter'); await document.fonts.load('600 40px Inter'); } catch { /* system font */ }
+    try { await document.fonts.load('300 100px Inter'); await document.fonts.load('600 40px Inter'); } catch { /* system font */ }
     const font = (w, s) => `${w} ${s}px Inter, -apple-system, system-ui, sans-serif`;
-    g.textAlign = 'center'; g.fillStyle = '#fff'; g.shadowColor = 'rgba(0,0,0,.25)'; g.shadowBlur = 16;
-    g.font = font(500, 40); g.globalAlpha = 0.9; g.fillText(`${evLabel(ev, p, evenings(p)).toUpperCase()} · ${dayName(ev.date, true).toUpperCase()}, ${dateText(ev.date).toUpperCase()}`, W / 2, 170);
-    g.globalAlpha = 1; g.font = font(400, 92); g.fillText(p.name, W / 2, 290);
-    if (r) {
-      g.font = font(200, 330); g.fillText(scoreText(r), W / 2 - 50, 640);
-      g.font = font(300, 96); g.globalAlpha = 0.75; g.textAlign = 'left'; g.fillText('/ 5', W / 2 + 190, 640); g.globalAlpha = 1; g.textAlign = 'center';
-      // Five stars, filled to the score.
-      const star = (cx, cy, rad) => { g.beginPath(); for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5, rr = i % 2 ? rad * 0.45 : rad; g.lineTo(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr); } g.closePath(); };
-      const val = r.tier === 'outlook' ? r.shown : r.score;
-      for (let i = 0; i < 5; i++) {
-        const cx = W / 2 + (i - 2) * 92, cy = 730;
-        g.shadowBlur = 0; star(cx, cy, 36); g.fillStyle = 'rgba(255,255,255,.22)'; g.fill();
-        const f = Math.max(0, Math.min(1, val - i));
-        if (f > 0) { g.save(); g.beginPath(); g.rect(cx - 36, cy - 40, 72 * f, 80); g.clip(); star(cx, cy, 36); g.fillStyle = '#F4B860'; g.fill(); g.restore(); }
-      }
-      g.shadowBlur = 16; g.fillStyle = '#FFE3B5'; g.font = font(600, 64); g.fillText(`${r.colourClass} colour · ${r.colour}`, W / 2, 870);
-      g.fillStyle = '#fff'; g.font = font(500, 54); g.fillText(r.verdict === 'go' ? 'Go' : r.verdict === 'maybe' ? 'Maybe' : 'Skip', W / 2, 950);
-    }
-    if (ev.times.sunset != null) { g.font = font(500, 46); g.globalAlpha = 0.95; g.fillText(`Sunset ${timeText(ev.times.sunset, p.tz)} · best light ${timeText(ev.times.bestStart, p.tz)}`, W / 2, 1060); }
+    g.textAlign = 'center'; g.fillStyle = '#fff'; g.shadowColor = 'rgba(0,0,0,.3)'; g.shadowBlur = 16;
+    /** Text centred at y, wrapped to at most `max` lines; returns the y after it. */
+    const text = (str, y, weight, size, max, alpha) => {
+      g.font = font(weight, size); g.globalAlpha = alpha == null ? 1 : alpha;
+      const words = String(str).split(/\s+/), lines = []; let cur = '';
+      for (const w of words) { const t = cur ? cur + ' ' + w : w; if (g.measureText(t).width > W - 140 && cur) { lines.push(cur); cur = w; } else cur = t; }
+      lines.push(cur);
+      const shown = lines.slice(0, max || 2);
+      if (lines.length > shown.length) shown[shown.length - 1] = shown[shown.length - 1].replace(/\W*\w+$/, '') + '…';
+      shown.forEach((l, i) => g.fillText(l, W / 2, y + i * size * 1.18));
+      g.globalAlpha = 1;
+      return y + shown.length * size * 1.18;
+    };
+    paint(text, g, W, H);
     g.globalAlpha = 0.9; g.font = font(600, 40); g.fillText('Golden Hour', W / 2, H - 120); g.font = font(400, 32); g.fillText(appUrl().replace(/^https?:\/\//, '').replace(/\/$/, ''), W / 2, H - 70);
     const blob = await new Promise((res) => c.toBlob(res, 'image/png'));
-    return blob ? new File([blob], `golden-hour-${p.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.png`, { type: 'image/png' }) : null;
+    return blob ? new File([blob], `golden-hour-${String(name).toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40) || 'sunset'}.png`, { type: 'image/png' }) : null;
+  }
+  /** Today's sunset as a picture: the answer, why, and the time. */
+  function sunsetCard(p, ev) {
+    const r = ev.rating, t = ev.times;
+    return drawCard(r, p.name, (text) => {
+      let y = text(`${dayName(ev.date, true)}, ${dateText(ev.date)}`.toUpperCase(), 170, 500, 40, 1, 0.9);
+      y = text(p.name, y + 80, 400, 88, 2);
+      if (r) { y = text(answerText(ev), y + 190, 300, 150, 2); y = text(r.reason, y - 10, 500, 46, 3, 0.95); }
+      if (t.sunset != null) { y = text(`Sunset ${timeText(t.sunset, p.tz)}`, Math.max(y + 100, 900), 600, 68, 1);
+        if (!r || r.verdict !== 'skip') text(`Be there by ${timeText(t.bestStart - 20 * MIN, p.tz)}`, y + 10, 500, 50, 1, 0.95); }
+    });
+  }
+  /** The evenings ahead as a picture: one line each, the best one marked. */
+  function weekCard_(p) {
+    const evs = evenings(p).filter((e) => e.rating), best = evs.filter((e) => e.rating.verdict === 'go').sort((a, b) => b.rating.score - a.rating.score)[0];
+    return drawCard(best ? best.rating : evs[0] && evs[0].rating, p.name + '-week', (text, g, W) => {
+      let y = text('SUNSETS THIS WEEK', 170, 500, 40, 1, 0.9);
+      y = text(p.name, y + 80, 400, 88, 1) + 70;
+      for (const e of evs.slice(0, 6)) {
+        g.textAlign = 'left'; g.font = '500 54px Inter, -apple-system, system-ui, sans-serif'; g.fillText(e.day === 0 ? 'Today' : dayName(e.date, true), 110, y);
+        g.font = '600 54px Inter, -apple-system, system-ui, sans-serif'; g.fillText(answerShort(e.rating) + (best && e.date === best.date ? ' · best' : ''), 470, y);
+        g.textAlign = 'right'; g.font = '400 48px Inter, -apple-system, system-ui, sans-serif'; g.globalAlpha = 0.9; g.fillText(timeText(e.times.sunset, p.tz), W - 110, y); g.globalAlpha = 1;
+        y += 104;
+      }
+      g.textAlign = 'center';
+    });
+  }
+  /** A plan as a picture: where, when to be there, and when it changed. */
+  function planCard(plan, r, changed) {
+    const tz = tzOr(plan.tz), t = plan.times, f = (ms) => timeText(ms, tz);
+    return drawCard(r, plan.spot.name, (text) => {
+      let y = text(changed ? `CHANGED: ${changed}`.toUpperCase() : 'SUNSET PLAN', 170, 600, 40, 2, 0.95);
+      y = text(plan.spot.name, y + 80, 400, 84, 2);
+      y = text(`${dayName(plan.date, true)}, ${dateText(plan.date)}`, y + 10, 500, 46, 1, 0.95);
+      y = text(`Be there by ${f(t.meetAt)}`, Math.max(y + 150, 640), 300, 112, 2);
+      y = text(`Sunset ${f(t.sunset)}`, y + 30, 600, 60, 1);
+      y = text(`Start back by ${f(t.headBackBy - (plan.walkIn || 0) * MIN)}`, y + 10, 500, 46, 1, 0.95);
+      if (plan.note) text(plan.note, y + 50, 500, 42, 2, 0.95);
+    });
   }
   const locationLink = (p) => `${appUrl()}#l=${encodeURIComponent([p.name, p.lat.toFixed(4), p.lon.toFixed(4), p.tz || ''].join('~'))}`;
-  async function shareToday(p) {
-    const ev = shownEvening(p), r = ev.rating, label = evLabel(ev, p, evenings(p));
-    const line = r ? `${label}'s sunset in ${p.name}: ${scoreText(r)}/5, ${r.colourClass.toLowerCase()} colour. ${r.verdict === 'go' ? 'Worth going out for.' : r.verdict === 'maybe' ? 'Could be good.' : 'One to skip.'}` : `${label}'s sunset in ${p.name}.`;
-    const times = ev.times.sunset != null ? ` Sunset ${timeText(ev.times.sunset, p.tz)}, best light from ${timeText(ev.times.bestStart, p.tz)}.` : '';
-    // The picture is made ahead of time (see prepareCard): a phone only lets the share sheet open straight from
-    // the tap, so there is no time to draw it then.
-    const file = cardCache.key === cardKey(p, ev) ? cardCache.file : null;
-    await shareOut({ title: 'Golden Hour', text: `${line}${times} From Golden Hour.`, url: locationLink(p), file });
-    if (!file) prepareCard(p);
-  }
-  const cardCache = { key: null, file: null };
+  // The pictures are made ahead of time: a phone only lets the share sheet open straight from the tap, so
+  // there is no time to draw one then.
+  const cardCache = { key: null, file: null }, weekCache = { key: null, file: null }, planCache = { key: null, file: null };
   const cardKey = (p, ev) => `${p.id}|${ev.date}|${ev.rating ? ev.rating.score : ''}|${settings.imperialFirst}`;
-  let cardTimer = 0;
-  /** Draws the share picture for the place on screen, a moment after it settles. */
+  const weekKey = (p) => `${p.id}|${evenings(p).map((e) => (e.rating ? e.rating.score : '')).join(',')}`;
+  let cardTimer = 0, planCardTimer = 0;
   function prepareCard(p) {
     clearTimeout(cardTimer);
     cardTimer = setTimeout(async () => {
-      const ev = shownEvening(p), key = cardKey(p, ev);
-      if (cardCache.key === key) return;
-      try { const file = await sunsetCard(p, ev); cardCache.key = key; cardCache.file = file; } catch { /* text only */ }
+      const ev = shownEvening(p), key = cardKey(p, ev), wk = weekKey(p);
+      try { if (cardCache.key !== key) { cardCache.file = await sunsetCard(p, ev); cardCache.key = key; } } catch { /* text only */ }
+      try { if (weekCache.key !== wk) { weekCache.file = await weekCard_(p); weekCache.key = wk; } } catch { /* text only */ }
     }, 600);
+  }
+  async function shareToday(p) {
+    const ev = shownEvening(p), r = ev.rating, t = ev.times;
+    const line = r ? `${answerText(ev)} in ${p.name}. ${r.reason}` : `The sunset in ${p.name}.`;
+    const times = t.sunset != null ? ` Sunset ${timeText(t.sunset, p.tz)}${r && r.verdict !== 'skip' ? `, be there by ${timeText(t.bestStart - 20 * MIN, p.tz)}` : ''}.` : '';
+    const file = cardCache.key === cardKey(p, ev) ? cardCache.file : null;
+    await shareOut({ title: 'Golden Hour', text: `${line}${times}`, url: locationLink(p), file });
+    if (!file) prepareCard(p);
+  }
+  async function shareWeek(p) {
+    const evs = evenings(p).filter((e) => e.rating), best = evs.filter((e) => e.rating.verdict === 'go').sort((a, b) => b.rating.score - a.rating.score)[0];
+    const lines = evs.map((e) => `${e.day === 0 ? 'Today' : dayName(e.date, true)}: ${answerShort(e.rating)}${best && best.date === e.date ? ' (best)' : ''}, sunset ${timeText(e.times.sunset, p.tz)}`);
+    const file = weekCache.key === weekKey(p) ? weekCache.file : null;
+    await shareOut({ title: 'Golden Hour', text: `Sunsets this week in ${p.name}:\n${lines.join('\n')}`, url: locationLink(p), file });
+    if (!file) prepareCard(p);
   }
   async function shareSpot(sp, p) {
     const url = `${appUrl()}#s=${G.encodeSpot(sp)}`, ev = shownEvening(p), r = ev.rating;
-    const tonight = r && G.distance(p.lat, p.lon, sp.lat, sp.lon) < 30000 ? ` Tonight's sunset there: ${scoreText(r)}/5, at ${timeText(ev.times.sunset, p.tz)}.` : '';
-    await shareOut({ title: sp.name, text: `${sp.name}: a great place to watch the sunset${p ? ` near ${p.name}` : ''}.${tonight} Found with Golden Hour.`, url });
+    const tonight = r && G.distance(p.lat, p.lon, sp.lat, sp.lon) < 30000 ? ` ${answerText(ev)}: sunset ${timeText(ev.times.sunset, p.tz)}.` : '';
+    await shareOut({ title: sp.name, text: `${sp.name}: a place to watch the sunset${p ? ` near ${p.name}` : ''}.${tonight}`, url });
   }
-  const shareApp = () => shareOut({ title: 'Golden Hour', text: 'Golden Hour: which evenings are worth it for the sunset, where to watch from, and a plan to share. Free, no account.', url: appUrl() });
+  const shareApp = () => shareOut({ title: 'Golden Hour', text: 'Golden Hour: is tonight’s sunset worth it, where to watch from, and a plan to send. Free, no account.', url: appUrl() });
 
   // ---------- Plan actions ----------
-  function newDraft(date) {
-    const p = place();
-    return { id: null, saved: false, placeId: p.id, tz: p.tz, date, spot: { name: '', type: 'outdoor', lat: null, lon: null }, walkIn: 5,
-      start: { lat: p.lat, lon: p.lon, label: p.name, kind: 'place' }, items: [], mapImage: null };
+  /** A new plan, kept from the first tap. With a place it is ready to share; without one it asks where. */
+  function newDraft(date, p, spot) {
+    const at = p || place();
+    return { id: 'p' + now().toString(36) + Math.random().toString(36).slice(2, 6), placeId: at.id, tz: at.tz, date,
+      spot: spot ? { name: spot.name, type: TYPE_OF_SPOT(spot), lat: spot.lat, lon: spot.lon } : { name: '', type: 'outdoor', lat: null, lon: null },
+      walkIn: spot ? WALK_OF_SPOT(spot) : 5, start: { lat: at.lat, lon: at.lon, label: at.name, kind: 'place' }, items: [], mapImage: null, createdAt: now() };
   }
-  function setPin(lat, lon) {
+  const planDraft = () => (S.view && S.view.type === 'plan' ? S.view.draft : null);
+  function startPlan(dr) { go({ type: 'plan', draft: dr }); autosave(); }
+  function setPin(lat, lon, name, soon) {
     const dr = S.view.draft;
+    keepFields();
     dr.spot.lat = Math.round(lat * 1e5) / 1e5; dr.spot.lon = Math.round(lon * 1e5) / 1e5;
-    keepFields(); autosave(); render();
+    if (name) dr.spot.name = name;
+    autosave();
+    if (soon) renderSoon(); else render();
   }
   /** Reads the form back into the draft, so a redraw never loses typing. */
   function keepFields() {
@@ -1428,84 +1741,147 @@
     dr.spot.name = $('#spotName').value.trim().slice(0, 60);
     dr.spot.type = $('#spotType').value;
     if ($('#walkIn')) dr.walkIn = Math.max(0, Math.min(240, Math.round(Number($('#walkIn').value) || 0)));
+    if (S.view.type !== 'plan') return;
+    if ($('#planNote')) dr.note = $('#planNote').value.trim().slice(0, 200);
+    if ($('#homeBy')) dr.homeBy = $('#homeBy').value || null;
+    // "Be there by" and "Travel" show the app's own figure until the planner changes them.
+    const auto = planModel({ ...dr, arriveBy: null, travelMin: null });
+    if ($('#arriveBy')) { const v = $('#arriveBy').value; dr.arriveBy = v && auto.pt && v !== hhmm(auto.pt.meetAt, auto.tz) ? v : null; }
+    if ($('#travelMin')) { const v = $('#travelMin').value, n = Math.max(0, Math.min(600, Math.round(Number(v) || 0))); dr.travelMin = v !== '' && n !== auto.travel ? n : null; }
   }
-  function toPlan(dr) {
-    const mo = planModel(dr);
-    return { id: dr.id, v: 1, placeId: dr.placeId, tz: mo.tz, spot: { ...dr.spot, name: dr.spot.name || 'Sunset spot' }, date: dr.date, who: null, walkIn: dr.walkIn, travel: mo.travel,
-      buffer: mo.buffer, start: dr.start, times: mo.pt, items: mo.items.map((i) => ({ ...i, isNew: false })), scoreAtSave: mo.r ? mo.r.score : null, mapImage: dr.mapImage, createdAt: dr.createdAt || now() };
+  function toPlan(dr, model) {
+    const mo = model || planModel(dr);
+    return { id: dr.id, v: 2, placeId: dr.placeId, tz: mo.tz, spot: { ...dr.spot }, date: dr.date, walkIn: dr.walkIn, travel: mo.travel, buffer: mo.buffer, start: dr.start, times: mo.pt,
+      items: mo.items.map((i) => ({ ...i, isNew: false })), scoreAtSave: dr.scoreAtSave == null ? (mo.r ? mo.r.score : null) : dr.scoreAtSave, mapImage: dr.mapImage, createdAt: dr.createdAt || now(),
+      arriveBy: dr.arriveBy || null, travelMin: dr.travelMin == null ? null : dr.travelMin, homeBy: dr.homeBy || null, note: dr.note || '', sent: dr.sent || null };
   }
-  async function savePlan() {
-    keepFields();
-    const dr = S.view.draft, mo = planModel(dr);
-    if (!mo.hasPin || !mo.pt) return toast('Drop a pin first');
-    if (db.isBlocked()) return toast('Plans can’t be saved in this browser mode');
-    if (!dr.id) dr.id = 'p' + now().toString(36) + Math.random().toString(36).slice(2, 6);
-    dr.mapImage = mapSnapshot() || dr.mapImage;
-    dr.items = mo.items;
-    dr.saved = true;
-    const plan = toPlan(dr);
-    await db.put('plans', plan);
-    S.plans = S.plans.filter((x) => x.id !== plan.id).concat(plan);
-    render();
-    toast('Plan saved. It works offline.');
-  }
+  /** Keeps the plan on screen. Called on every change and on leaving, so going back never loses it. */
   function autosave() {
-    const dr = S.view && S.view.draft;
-    if (!dr || !dr.saved) return;
+    const dr = planDraft();
+    if (!dr || db.isBlocked()) return;
     const mo = planModel(dr);
-    if (!mo.pt) return;
     dr.items = mo.items;
-    const plan = toPlan(dr);
+    dr.mapImage = mapSnapshot() || dr.mapImage;
+    const plan = toPlan(dr, mo);
     db.put('plans', plan);
     S.plans = S.plans.filter((x) => x.id !== plan.id).concat(plan);
+  }
+  /** A plan opened and left with nothing in it is not kept. */
+  function dropEmptyDraft() {
+    const dr = planDraft();
+    if (!dr || dr.spot.lat != null || dr.spot.name || dr.note || (dr.items || []).some((i) => i.custom)) return;
+    S.plans = S.plans.filter((x) => x.id !== dr.id); db.del('plans', dr.id);
   }
   function openPlan(id) {
     const pl = S.plans.find((x) => x.id === id);
     if (!pl) return;
     if (S.places.some((p) => p.id === pl.placeId)) S.current = pl.placeId;
-    S.view = { type: 'plan', draft: { id: pl.id, saved: true, placeId: pl.placeId, tz: pl.tz, date: pl.date, spot: { ...pl.spot }, walkIn: pl.walkIn, start: pl.start, items: pl.items, mapImage: pl.mapImage, createdAt: pl.createdAt } };
-    render();
-    load(place()).then(render);
+    go({ type: 'plan', draft: { id: pl.id, placeId: pl.placeId, tz: pl.tz, date: pl.date, spot: { ...pl.spot }, walkIn: pl.walkIn, start: pl.start, items: pl.items, mapImage: pl.mapImage, createdAt: pl.createdAt,
+      arriveBy: pl.arriveBy || null, travelMin: pl.travelMin == null ? null : pl.travelMin, homeBy: pl.homeBy || null, note: pl.note || '', sent: pl.sent || null, scoreAtSave: pl.scoreAtSave } });
+    const p = place(pl.placeId);
+    if (p) load(p).then(() => { if (planDraft()) { keepFields(); render(); } });
   }
-  function shareUrl(plan) { return location.origin + location.pathname + '#p=' + G.encodePlan({ ...plan, sharedAt: now() }); }
+  function shareUrl(plan) { return location.origin + location.pathname + '#p=' + G.encodePlan({ ...plan, spot: { ...plan.spot, name: plan.spot.name || 'Sunset spot' }, sharedAt: now() }); }
+  /** What changed since the plan was last sent: the day, the place or the time. */
+  function changeLine(sent, plan) {
+    if (!sent) return '';
+    if (sent.date !== plan.date) return `now ${dayName(plan.date, true)}`;
+    if (sent.name !== plan.spot.name) return `now at ${plan.spot.name}`;
+    if (sent.meetAt !== plan.times.meetAt) return `now ${timeText(plan.times.meetAt, plan.tz)}`;
+    return '';
+  }
+  const planCardKey = (plan, changed) => [plan.id, plan.date, plan.spot.name, plan.times.meetAt, plan.times.headBackBy, plan.walkIn, plan.note, changed, settings.imperialFirst].join('|');
+  /** Draws the plan's picture a moment after the plan settles, so Share can open the sheet at once. */
+  function preparePlanCard() {
+    clearTimeout(planCardTimer);
+    planCardTimer = setTimeout(async () => {
+      const dr = planDraft();
+      if (!dr) return;
+      const mo = planModel(dr);
+      if (!mo.hasPin || !mo.pt) return;
+      const plan = toPlan(dr, mo), changed = changeLine(dr.sent, plan), key = planCardKey(plan, changed);
+      if (planCache.key === key) return;
+      try { planCache.file = await planCard({ ...plan, spot: { ...plan.spot, name: plan.spot.name || 'Sunset spot' } }, mo.r, changed); planCache.key = key; } catch { /* text only */ }
+    }, 500);
+  }
+  /** Share, in one tap: the picture if it is ready, the words and the link. An update says what changed. */
   async function shareGo() {
     keepFields(); autosave();
-    const plan = toPlan(S.view.draft), url = shareUrl(plan);
-    S.view.sharing = false;
-    render();
+    const dr = planDraft(), mo = planModel(dr);
+    if (!mo.hasPin || !mo.pt) return toast('Choose the place first');
+    const plan = toPlan(dr, mo), changed = changeLine(dr.sent, plan), url = shareUrl({ ...plan, changed });
     if (url.length > 2000 + location.origin.length + location.pathname.length) return toast('Too many items to fit in a link. Remove a few.');
-    const text = `Sunset at ${plan.spot.name}, ${dayName(plan.date, true)}. Meet at ${timeText(plan.times.meetAt, plan.tz)}.`;
-    try {
-      if (navigator.share) await navigator.share({ title: 'Golden Hour', text, url });
-      else { await navigator.clipboard.writeText(url); toast('Link copied'); }
-    } catch (e) {
-      if (e && e.name === 'AbortError') return;
-      try { await navigator.clipboard.writeText(url); toast('Link copied'); } catch { window.prompt('Copy this link', url); }
-    }
+    const name = plan.spot.name || 'the sunset spot', f = (ms) => timeText(ms, plan.tz);
+    const text = `${changed ? `Changed: ${changed}. ` : ''}Sunset at ${name}, ${dayName(plan.date, true)}. Be there by ${f(plan.times.meetAt)}; sunset ${f(plan.times.sunset)}.${plan.note ? ` ${plan.note}` : ''}`;
+    const file = planCache.key === planCardKey(plan, changed) ? planCache.file : null;
+    const done = await shareOut({ title: 'Golden Hour', text, url, file });
+    if (!done || !planDraft() || planDraft().id !== dr.id) return;
+    dr.sent = { meetAt: plan.times.meetAt, date: plan.date, name: plan.spot.name, at: now() };
+    keepFields(); autosave(); render();
   }
-  /** The calendar event: from leave-by for the organiser, from meet-at for someone it was shared with. */
+  /** The calendar event: from leave-by for the organiser, from be-there-by for someone it was shared with,
+      with a reminder half an hour before. In the iPhone app it opens Calendar's own "new event" sheet. */
   async function addToCalendar() {
     const shared = S.view.type === 'shared';
     const plan = shared ? S.view.plan : (keepFields(), autosave(), toPlan(S.view.draft));
-    const tz = tzOr(plan.tz), t = plan.times, f = (ms) => timeText(ms, tz);
+    if (!plan.times || plan.spot.lat == null) return toast('Choose the place first');
+    const tz = tzOr(plan.tz), t = plan.times, f = (ms) => timeText(ms, tz), name = plan.spot.name || 'Sunset spot';
     const link = shared ? location.href : shareUrl(plan);
     const lines = [];
     if (!shared) lines.push(`Leave by ${f(t.leaveBy)}`);
-    lines.push(`Meet at ${f(t.meetAt)}`, `Sunset ${f(t.sunset)}`, `Stay until ${f(t.stayUntil)} for the afterglow`, `Head back by ${f(t.headBackBy)}`);
+    lines.push(`Be there by ${f(t.meetAt)}`, `Sunset ${f(t.sunset)}`, `Stay until ${f(t.stayUntil)} for the afterglow`, `Start back by ${f(t.headBackBy - (plan.walkIn || 0) * MIN)} to be back before dark`);
+    if (plan.note) lines.push('', plan.note);
     if (plan.items.length) lines.push('', 'Bring: ' + plan.items.map((i) => (i.who ? `${i.name} (${i.who})` : i.name)).join(', '));
     lines.push('', link);
-    const text = G.ics({ id: plan.id || 'shared-' + plan.date, now: now(), start: shared ? t.meetAt : t.leaveBy, end: t.headBackBy, title: `Sunset at ${plan.spot.name}`,
-      location: `${plan.spot.name} (${plan.spot.lat.toFixed(5)}, ${plan.spot.lon.toFixed(5)})`, description: lines.join('\n') });
-    const file = new File([text], 'golden-hour.ics', { type: 'text/calendar' });
+    const ev = { id: plan.id || 'shared-' + plan.date, now: now(), start: shared ? t.meetAt : t.leaveBy, end: t.headBackBy, title: `Sunset at ${name}`,
+      location: `${name} (${plan.spot.lat.toFixed(5)}, ${plan.spot.lon.toFixed(5)})`, description: lines.join('\n'), alarm: 30 };
+    const native = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.goldenHour;
+    if (native) { try { native.postMessage({ type: 'calendar', title: ev.title, start: ev.start, end: ev.end, location: ev.location, notes: ev.description, alarm: ev.alarm }); return; } catch { /* fall through to the file */ } }
+    const file = new File([G.ics(ev)], 'golden-hour.ics', { type: 'text/calendar' });
     try {
-      if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: `Sunset at ${plan.spot.name}` }); return; }
+      if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: ev.title }); return; }
     } catch (e) { if (e && e.name === 'AbortError') return; }
     const a = document.createElement('a');
     a.href = URL.createObjectURL(file); a.download = 'golden-hour.ics';
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 4000);
-    toast('Calendar file downloaded');
+    toast('Calendar file saved. Open it to add the event.');
   }
+
+  // ---------- Finding a venue by name or address (Photon, from open map data) ----------
+  let venueTimer = 0, venueSeq = 0;
+  function bindVenueSearch() { const q = $('#venueQ'); if (q) q.addEventListener('input', onVenueInput); drawVenueResults(); }
+  function drawVenueResults() {
+    const list = $('#venueResults'), res = S.view && S.view.venues;
+    if (!list) return;
+    if (!res) list.innerHTML = '';
+    else if (typeof res === 'string') list.innerHTML = `<p class="small muted">${esc(res)}</p>`;
+    else list.innerHTML = res.map((r, i) => `<button type="button" class="result" data-act="venue-pick" data-i="${i}"><span><span class="n">${esc(r.name)}</span><br><span class="r">${esc(r.region)}</span></span><span class="sp"></span><span aria-hidden="true">+</span></button>`).join('');
+  }
+  function onVenueInput(e) {
+    const q = e.target.value.trim(), seq = ++venueSeq;
+    S.view.venueQ = e.target.value;
+    clearTimeout(venueTimer);
+    if (q.length < 3) { S.view.venues = null; return drawVenueResults(); }
+    venueTimer = setTimeout(async () => {
+      const p = place(S.view.draft.placeId), t0 = now();
+      let out;
+      try {
+        const r = await fetch('https://photon.komoot.io/api/?' + new URLSearchParams({ q, limit: '6', lang: 'en', ...(p ? { lat: p.lat.toFixed(3), lon: p.lon.toFixed(3) } : {}) }), { signal: AbortSignal.timeout(8000) });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        out = ((await r.json()).features || []).filter((f) => f.geometry && Array.isArray(f.geometry.coordinates) && Number.isFinite(f.geometry.coordinates[0])).map((f) => {
+          const o = f.properties || {}, street = [o.housenumber, o.street].filter(Boolean).join(' ');
+          return { name: String(o.name || street || q).slice(0, 60), region: [o.name ? street : '', o.city || o.town || o.village || o.county, o.state, o.country].filter(Boolean).join(', '),
+            lat: f.geometry.coordinates[1], lon: f.geometry.coordinates[0], kind: String(o.osm_value || '') };
+        });
+        note('Venue search', true, `${out.length} found`, t0);
+      } catch (err) { note('Venue search', false, why(err), t0); out = navigator.onLine ? 'Couldn’t search just now. Tap the map, or type coordinates.' : 'Venue search needs a connection.'; }
+      if (seq !== venueSeq || !planDraft()) return;
+      S.view.venues = Array.isArray(out) && !out.length ? 'No venue found with that name.' : out;
+      drawVenueResults();
+    }, 350);
+  }
+  const TYPE_OF_KIND = (k) => (/restaurant|bar|pub|cafe|biergarten|hotel/.test(k) ? 'venue' : /beach|pier|marina|water|coast/.test(k) ? 'water' : /peak|viewpoint|cliff/.test(k) ? 'peak' : 'outdoor');
 
   // ---------- Places: search, location ----------
   let cityList = null, searchTimer = 0, searchSeq = 0;
@@ -1542,16 +1918,24 @@
     if (S.places.filter((p) => !p.sample).length >= 20) return toast('Twenty places at most. Remove one first.');
     const id = here ? 'here' : `${r.lat.toFixed(2)},${r.lon.toFixed(2)}`;
     const p = { id, name: r.name, region: r.region || '', lat: r.lat, lon: r.lon, tz: validTz(r.tz) ? r.tz : here ? deviceTz() : roughTz(r.lon), here: !!here };
+    if (!validTz(r.tz) && !here) p.tzRough = true;
     for (const s of S.places.filter((x) => x.sample)) db.del('places', s.id);
-    S.places = S.places.filter((x) => x.id !== id && !x.sample).concat(p);
+    const at = S.places.findIndex((x) => x.id === id);   // a place already in the list keeps its position
+    if (at >= 0) { S.places[at] = p; delete DATA[id]; } else S.places.push(p);
+    S.places = S.places.filter((x) => !x.sample);
     await db.put('places', p);
     S.results = null; S.editing = false;
     goTo(id);
   }
   function locate(then) {
-    if (!navigator.geolocation) return toast('Search for a place instead.');
-    navigator.geolocation.getCurrentPosition((pos) => then(pos.coords.latitude, pos.coords.longitude),
-      () => toast('Search for a place instead.'), { timeout: 12000, maximumAge: 5 * MIN });
+    if (!navigator.geolocation) return toast('This browser can’t share where you are. Search for a place instead.');
+    const t0 = now();
+    navigator.geolocation.getCurrentPosition((pos) => { note('Location', true, 'found', t0); then(pos.coords.latitude, pos.coords.longitude); },
+      (err) => {
+        const denied = err && err.code === 1;
+        note('Location', false, denied ? 'not allowed' : err && err.code === 3 ? 'timed out' : 'unavailable', t0);
+        toast(denied ? 'Location is turned off for Golden Hour. Search for a place, or allow it in Settings.' : 'Couldn’t find where you are just now. Try again, or search for a place.');
+      }, { timeout: 12000, maximumAge: 5 * MIN });
   }
   async function nameNear(lat, lon) {
     try {
@@ -1564,42 +1948,55 @@
   }
 
   // ---------- Events ----------
+  /** Puts a new screen where the open sheet was, so Back goes to what was under the sheet. */
+  function replaceSheetWith(view) { S.sheet = null; S.view = view; render(); const sc = $('.screen'); if (sc) sc.scrollTop = 0; }
+  function redraw(p) { if (S.view || S.sheet) render(); else update(p); }
   const ACT = {
     units(el) { settings.imperialFirst = el.dataset.v === 'imperial'; store.set('imperialFirst', settings.imperialFirst); keepFields(); render(); },
-    search() {},
-    goto(el) { goTo(el.dataset.id, !S.view); },
+    goto(el) { goTo(el.dataset.id, !S.view && !S.sheet); },
+    'open-today'() { if (S.view || S.sheet) go(null); else { const pg = $('.page[aria-current="true"]'); if (pg) pg.scrollTo({ top: 0 }); } },
+    'open-plans'() { if (!(S.view && S.view.type === 'plans' && !S.sheet)) go({ type: 'plans' }); },
+    'open-list'() { if (!(S.view && S.view.type === 'list' && !S.sheet)) { S.results = null; go({ type: 'list' }); loadAll(); } },
+    'add-place'() { S.results = null; S.focusSearch = true; go({ type: 'list' }); },
+    settings() { openSheet({ kind: 'settings', page: 'main' }); },
+    'settings-page'(el) { S.sheet.page = el.dataset.page; drawSheet(true); },
+    async 'copy-status'() {
+      const text = [`Golden Hour ${VERSION}`, navigator.userAgent, navigator.onLine ? 'online' : 'offline', ...STATUS.map((s) => `${new Date(s.at).toISOString()} ${s.what}: ${s.ok ? 'ok' : 'FAILED'} ${s.detail}${s.ms != null ? ` (${s.ms} ms)` : ''}`)].join('\n');
+      try { await navigator.clipboard.writeText(text); toast('Status copied'); } catch { window.prompt('Copy the status', text); }
+    },
     'share-today'() { shareToday(place()); },
+    'share-week'(el) { shareWeek(place(el.dataset.place)); },
     'share-app'() { shareApp(); },
-    'share-spot'() { shareSpot(S.view.spot, place(S.view.placeId) || place()); },
-    'spots-all'(el) { S.view = { type: 'spots', placeId: el.dataset.place || S.current, expanded: {} }; render(); },
+    'share-spot'() { const sh = S.sheet; if (sh && sh.kind === 'spot') shareSpot(sh.spot, place(sh.placeId) || place()); },
+    'spots-all'(el) { go({ type: 'spots', placeId: el.dataset.place || S.current, expanded: {} }); },
     'spots-more'(el) { S.view.expanded[el.dataset.k] = !S.view.expanded[el.dataset.k]; render(); },
-    async 'spots-retry'() { const p = place(S.view && S.view.placeId); DATA[p.id].spots = null; update(p); await loadSpots(p); update(p); if (S.view) render(); },
+    filter(el) { S.filters[el.dataset.k] = !S.filters[el.dataset.k]; render(); },
+    async 'spots-retry'(el) {
+      const p = place((el && el.dataset.place) || (S.view && S.view.placeId) || (S.sheet && S.sheet.placeId));
+      const d = DATA[p.id]; d.spots = null; d.spotsTriedAt = 0;
+      const going = loadSpots(p); redraw(p); await going; redraw(p);
+    },
+    async 'near-retry'() { const p = place(S.view && S.view.placeId), d = DATA[p.id]; d.near = null; const going = loadNear(p); render(); await going; render(); },
     'spot-open'(el) {
       const p = place(el.dataset.place), sp = findSpot(p, el.dataset.id);
-      if (!sp) return;
-      S.view = { type: 'spot', spot: sp, placeId: p.id, from: S.view && S.view.type === 'spots' ? 'all' : 'page', back: S.view };
-      render();
+      if (sp) openSheet({ kind: 'spot', spot: sp, placeId: p.id });
     },
     'spot-plan'() {
-      const v = S.view, sp = v.spot, p = place(v.placeId) || place(), ev = shownEvening(p);
+      const sh = S.sheet, p = place(sh.placeId) || place(), ev = shownEvening(p);
       S.current = p.id;
-      const dr = newDraft(ev.date);
-      dr.spot = { name: sp.name, type: TYPE_OF_SPOT(sp), lat: sp.lat, lon: sp.lon };
-      dr.walkIn = WALK_OF_SPOT(sp);
-      S.view = { type: 'plan', draft: dr };
-      render();
+      replaceSheetWith({ type: 'plan', draft: newDraft(ev.date, p, sh.spot) }); autosave();
     },
     async 'spot-save'() {
-      const sp = S.view.spot, own = { id: 'own-' + now().toString(36), name: sp.name, cat: 'own', kind: sp.kind || 'Your spot', rooftop: !!sp.rooftop, type: TYPE_OF_SPOT(sp), lat: sp.lat, lon: sp.lon, ele: sp.ele == null ? null : sp.ele, createdAt: now() };
+      const sp = S.sheet.spot, own = { id: 'own-' + now().toString(36), name: sp.name, cat: 'own', kind: sp.kind || 'Your spot', rooftop: !!sp.rooftop, type: TYPE_OF_SPOT(sp), lat: sp.lat, lon: sp.lon, ele: sp.ele == null ? null : sp.ele, createdAt: now() };
       if (db.isBlocked()) return toast('Spots can’t be saved in this browser mode');
       S.spots.push(own); await db.put('spots', own); render(); toast('Saved to your spots');
     },
     async 'spot-del'() {
       if (!window.confirm('Remove this spot?')) return;
-      const id = S.view.spot.id; S.spots = S.spots.filter((x) => x.id !== id); await db.del('spots', id);
-      S.view = { type: 'spots', placeId: S.view.placeId, expanded: {} }; render();
+      const id = S.sheet.spot.id; S.spots = S.spots.filter((x) => x.id !== id); await db.del('spots', id);
+      back();
     },
-    'spot-add'(el) { S.view = { type: 'addspot', placeId: el.dataset.place || S.current, draft: { spot: { name: '', type: 'outdoor', lat: null, lon: null } } }; render(); },
+    'spot-add'(el) { go({ type: 'addspot', placeId: el.dataset.place || S.current, draft: { spot: { name: '', type: 'outdoor', lat: null, lon: null } } }); },
     async 'spot-create'() {
       keepFields();
       const v = S.view, sp = v.draft.spot;
@@ -1607,11 +2004,8 @@
       if (db.isBlocked()) return toast('Spots can’t be saved in this browser mode');
       const own = { id: 'own-' + now().toString(36), name: sp.name || 'My sunset spot', cat: 'own', kind: KIND_OF_TYPE[sp.type] || 'Your spot', type: sp.type, lat: sp.lat, lon: sp.lon, createdAt: now() };
       S.spots.push(own); await db.put('spots', own);
-      S.view = { type: 'spots', placeId: v.placeId, expanded: {} }; render(); toast('Spot saved');
+      back(); toast('Spot saved');
     },
-    'open-list'() { S.view = { type: 'list' }; S.results = null; render(); loadAll(); },
-    'open-plans'() { S.view = { type: 'plans' }; render(); },
-    'add-place'() { S.view = { type: 'list' }; S.results = null; S.focusSearch = true; render(); },
     edit() { S.editing = !S.editing; render(); },
     async remove(el) {
       const id = el.dataset.id;
@@ -1623,13 +2017,21 @@
     },
     add(el) { const r = S.results[Number(el.dataset.i)]; if (r) addPlace(r); },
     locate() { locate(async (lat, lon) => { const n = await nameNear(lat, lon); addPlace({ ...n, lat, lon, tz: deviceTz() }, true); }); },
-    async retry() { const p = place(); DATA[p.id].error = null; update(p); await load(p, true); update(p); },
-    day(el) { if (el.dataset.day === '') return; S.sheet = { placeId: place().id, day: Number(el.dataset.day) }; drawSheet(true); },
-    cell(el) { goTo(el.dataset.id); S.sheet = { placeId: el.dataset.id, day: Number(el.dataset.day) }; drawSheet(true); },
+    async retry() {
+      const p = place(), d = DATA[p.id];
+      d.triedAt = now();
+      const going = load(p, true); update(p); await going; update(p);
+      if (d.error && d.fc) toast('Still can’t refresh. Showing the last forecast.');
+    },
+    day(el) {
+      const date = el.dataset.date;
+      if (!date) return;
+      if (S.sheet && S.sheet.kind === 'day') { S.sheet.date = date; drawSheet(true); } else openSheet({ kind: 'day', placeId: el.dataset.place || S.current, date });
+    },
     'details-toggle'() { store.set('details', !store.get('details', false)); S.places.forEach(update); },
-    'sheet-close'() { S.sheet = null; drawSheet(); },
+    'sheet-close'() { back(); },
     'sheet-step'(el) { stepSheet(Number(el.dataset.d)); },
-    compare() { settings.compare = !settings.compare; store.set('compare', settings.compare); render(); if (settings.compare) loadAll(); },
+    'close-view'() { back(); },
     async rate(el) {
       const p = place(), date = el.dataset.date, v = Number(el.dataset.v), rec = DATA[p.id].logged[date];
       const r = { placeId: p.id, date, predicted: rec.score, parts: rec.parts, observed: v || null, at: now() };
@@ -1637,20 +2039,46 @@
       S.justRated = v ? r : null;
       update(p); toast(v ? 'Thanks. Saved to your sunset log.' : 'Noted.');
     },
-    log() { S.view = { type: 'log' }; render(); },
+    'rate-later'(el) { store.set('hwiSkip', `${place().id}|${el.dataset.date}`); update(place()); },
     async 'copy-log'() { try { await navigator.clipboard.writeText(JSON.stringify(S.ratings, null, 1)); toast('Log copied'); } catch { toast('Couldn’t copy'); } },
-    'close-view'() { keepFields(); autosave(); const v = S.view; S.view = v && v.type === 'plan' && v.draft.saved ? { type: 'plans' } : v && v.type === 'spot' && v.back ? v.back : v && v.type === 'addspot' ? { type: 'spots', placeId: v.placeId, expanded: {} } : null; S.editing = false; render(); },
-    'plan-new'(el) { S.view = { type: 'plan', draft: newDraft(el.dataset.date) }; render(); },
+    'plan-new'(el) {
+      const p = place(el && el.dataset.place), date = (el && el.dataset.date) || shownEvening(p).date;
+      const sp = el && el.dataset.id ? findSpot(p, el.dataset.id) : null;
+      if (sp) return startPlan(newDraft(date, p, sp));
+      if (allSpots(p) || ownSpots(p).length) return openSheet({ kind: 'pick', placeId: p.id, date });
+      startPlan(newDraft(date, p));
+    },
+    /** A place chosen in the picker: for a new plan, or for the plan already open. */
+    'plan-here'(el) {
+      const p = place(el.dataset.place), sp = findSpot(p, el.dataset.id), sh = S.sheet;
+      if (!sp || !sh) return;
+      const dr = planDraft();
+      if (sh.repick && dr) {
+        dr.spot = { name: sp.name, type: TYPE_OF_SPOT(sp), lat: sp.lat, lon: sp.lon }; dr.walkIn = WALK_OF_SPOT(sp);
+        if ($('#spotName')) { $('#spotName').value = sp.name; $('#spotType').value = dr.spot.type; $('#walkIn').value = dr.walkIn; }
+        return back();
+      }
+      replaceSheetWith({ type: 'plan', draft: newDraft(el.dataset.date || sh.date, p, sp) }); autosave();
+    },
+    'plan-blank'(el) { replaceSheetWith({ type: 'plan', draft: newDraft(el.dataset.date, place(el.dataset.place)) }); },
+    'plan-pick'() { const dr = planDraft(); keepFields(); autosave(); openSheet({ kind: 'pick', placeId: dr.placeId, date: dr.date, repick: true }); },
+    'venue-pick'(el) {
+      const r = S.view.venues && S.view.venues[Number(el.dataset.i)], dr = planDraft();
+      if (!r || !dr) return;
+      keepFields();
+      dr.spot = { name: r.name, type: TYPE_OF_KIND(r.kind), lat: Math.round(r.lat * 1e5) / 1e5, lon: Math.round(r.lon * 1e5) / 1e5 };
+      S.view.venues = null; S.view.venueQ = '';
+      autosave(); render();
+    },
     'plan-open'(el) { openPlan(el.dataset.id); },
-    'plan-save'() { savePlan(); },
     async 'plan-del'() {
       if (!window.confirm('Delete this plan?')) return;
       const id = S.view.draft.id;
+      S.view = { type: 'gone' };   // nothing left to save on the way out
       S.plans = S.plans.filter((p) => p.id !== id); await db.del('plans', id);
-      S.view = { type: 'plans' }; render();
+      if (NAV.length) back(); else { S.view = { type: 'plans' }; render(); }
     },
     'pin-here'() { locate((lat, lon) => setPin(lat, lon)); },
-    'pin-place'() { const p = place(S.view.draft.placeId); setPin(p.lat, p.lon); },
     'start-here'() { locate((lat, lon) => { keepFields(); S.view.draft.start = { lat, lon, label: 'my location', kind: 'here' }; autosave(); render(); }); },
     'start-place'() { const p = place(S.view.draft.placeId); keepFields(); S.view.draft.start = { lat: p.lat, lon: p.lon, label: p.name, kind: 'place' }; autosave(); render(); },
     tick(el) { keepFields(); const dr = S.view.draft, items = planModel(dr).items; items[Number(el.dataset.i)].done = el.checked; items[Number(el.dataset.i)].isNew = false; dr.items = items; autosave(); render(); },
@@ -1664,9 +2092,8 @@
       dr.items = items; autosave(); render();
     },
     'item-del'(el) { keepFields(); const dr = S.view.draft, items = planModel(dr).items; items.splice(Number(el.dataset.i), 1); dr.items = items; autosave(); render(); },
-    share() { keepFields(); S.view.sharing = true; render(); const n = $('#shareNotice'); if (n) n.scrollIntoView({ block: 'center' }); },
-    'share-cancel'() { S.view.sharing = false; render(); },
     'share-go'() { shareGo(); },
+    'share-update'() { shareGo(); },
     calendar() { addToCalendar(); },
   };
   document.addEventListener('click', (e) => {
@@ -1675,24 +2102,35 @@
     const fn = ACT[el.dataset.act];
     if (fn) fn(el);
   });
-  // The sheet: a tap outside it closes it; a sideways swipe moves between evenings.
+  // A sheet: a tap outside it closes it; on a day, a sideways swipe moves between evenings.
   {
-    const back = $('#sheetback'); let swipe = null;
-    back.addEventListener('click', (e) => { if (e.target === back) ACT['sheet-close'](); });
-    back.addEventListener('touchstart', (e) => { swipe = e.touches.length === 1 ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : null; }, { passive: true });
-    back.addEventListener('touchend', (e) => {
+    const backdrop = $('#sheetback'); let swipe = null;
+    backdrop.addEventListener('click', (e) => { if (e.target === backdrop) back(); });
+    backdrop.addEventListener('touchstart', (e) => { swipe = e.touches.length === 1 && S.sheet && S.sheet.kind === 'day' ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : null; }, { passive: true });
+    backdrop.addEventListener('touchend', (e) => {
       if (!swipe) return;
       const t = e.changedTouches[0], dx = t.clientX - swipe.x, dy = t.clientY - swipe.y; swipe = null;
       if (Math.abs(dx) >= 50 && Math.abs(dx) > Math.abs(dy) * 1.5) stepSheet(dx < 0 ? 1 : -1);
     }, { passive: true });
   }
+  // A field's change arrives as the finger goes down on whatever is tapped next. Redrawing then would replace
+  // that button mid-tap and lose the tap, so the redraw waits until the finger is up.
+  let pressing = false, drawLater = false;
+  const released = () => { pressing = false; if (drawLater) { drawLater = false; keepFields(); render(); } };
+  document.addEventListener('pointerdown', () => { pressing = true; }, true);
+  document.addEventListener('pointerup', () => setTimeout(released, 0), true);
+  document.addEventListener('pointercancel', () => setTimeout(released, 0), true);
+  function renderSoon() { if (pressing) drawLater = true; else render(); }
+  const PLAN_FIELDS = ['spotType', 'walkIn', 'spotName', 'arriveBy', 'travelMin', 'homeBy', 'planNote'];
   document.addEventListener('change', (e) => {
     const t = e.target;
     if (t.dataset && t.dataset.act === 'tick') return ACT.tick(t);
-    if (t.id === 'spotType' || t.id === 'walkIn' || t.id === 'spotName') { keepFields(); autosave(); render(); }
+    if (t.id === 'anyDate') { if (/^\d{4}-\d{2}-\d{2}$/.test(t.value)) { const date = t.value, pid = t.dataset.place; t.value = ''; openSheet({ kind: 'day', placeId: pid || S.current, date }); } return; }
+    if (t.id === 'planDate') { const dr = planDraft(); if (dr && /^\d{4}-\d{2}-\d{2}$/.test(t.value)) { keepFields(); dr.date = t.value; dr.arriveBy = null; dr.scoreAtSave = null; if ($('#arriveBy')) $('#arriveBy').value = ''; autosave(); renderSoon(); } return; }
+    if (PLAN_FIELDS.includes(t.id)) { keepFields(); autosave(); renderSoon(); }
     if (t.id === 'coords') {
       const m = t.value.match(/(-?\d+(?:\.\d+)?)\s*[,\s]\s*(-?\d+(?:\.\d+)?)/);
-      if (m && Math.abs(m[1]) <= 90 && Math.abs(m[2]) <= 180) setPin(Number(m[1]), Number(m[2]));
+      if (m && Math.abs(m[1]) <= 90 && Math.abs(m[2]) <= 180) setPin(Number(m[1]), Number(m[2]), null, true);
       else if (t.value.trim()) toast('Type a latitude and longitude, like 39.7392, -104.9903');
     }
     if (t.dataset && t.dataset.actInput === 'who') {
@@ -1705,8 +2143,8 @@
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && e.target.id === 'newItem') return ACT['item-add']();
     if (S.sheet) {
-      if (e.key === 'Escape') ACT['sheet-close']();
-      else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); stepSheet(e.key === 'ArrowRight' ? 1 : -1); }
+      if (e.key === 'Escape') back();
+      else if (S.sheet.kind === 'day' && (e.key === 'ArrowLeft' || e.key === 'ArrowRight') && !/INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) { e.preventDefault(); stepSheet(e.key === 'ArrowRight' ? 1 : -1); }
       return;
     }
     if (S.view || /INPUT|SELECT|TEXTAREA/.test(e.target.tagName) || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
@@ -1719,14 +2157,16 @@
     for (const p of S.places.slice()) { const d = DATA[p.id]; if (!d || !d.fc || now() - d.fetchedAt > 3 * HOUR) { await load(p); update(p); } }
   }
 
-  // ---------- Keeping current: every 30 minutes while open, and on coming back to the tab ----------
+  // ---------- Keeping current: every 30 minutes while open, and on coming back to the app ----------
   async function refresh() {
     if (document.visibilityState !== 'visible') return;
-    if (S.view && S.view.type !== 'list') return;
+    if (S.view && S.view.type !== 'list' && S.view.type !== 'plans') return;
     const p = place();
     if (!p) return;
     const d = DATA[p.id];
-    if (!d || !d.fc || now() - d.fetchedAt >= 30 * MIN || p.sample) { await load(p, true); update(p); }
+    const due = !d || !d.fc || p.sample || now() - d.fetchedAt >= 30 * MIN || (d.error && now() - (d.triedAt || 0) > 2 * MIN);
+    if (due) { if (d) d.triedAt = now(); await load(p, true); update(p); }
+    else if (d.spots === 'error' && now() - (d.spotsTriedAt || 0) > 2 * MIN) loadSpots(p).then(() => update(p));   // places that failed are looked for again
   }
   setInterval(refresh, MIN);
   document.addEventListener('visibilitychange', refresh);
@@ -1765,6 +2205,7 @@
   async function start() {
     await db.ready;
     if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+    try { history.replaceState({ d: 0 }, ''); } catch { /* no history in this frame */ }
     if (location.hash.startsWith('#p=')) return openShared(location.hash);
     const incoming = location.hash;
     if (/^#[ls]=/.test(incoming)) history.replaceState(null, '', location.pathname + location.search);
@@ -1784,7 +2225,7 @@
       const sp = G.decodeSpot(incoming.slice(3));
       if (sp) { const near = S.places.slice().sort((a, b) => G.distance(a.lat, a.lon, sp.lat, sp.lon) - G.distance(b.lat, b.lon, sp.lat, sp.lon))[0];
         if (near) S.current = near.id;
-        S.view = { type: 'spot', spot: { ...sp, id: 'shared/' + sp.lat + ',' + sp.lon }, placeId: S.current, shared: true }; }
+        S.sheet = { kind: 'spot', spot: { ...sp, id: 'shared/' + sp.lat + ',' + sp.lon }, placeId: S.current, shared: true }; }
     }
     const p = place();
     if (p.sample) await load(p);

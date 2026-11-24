@@ -1,7 +1,7 @@
 /* Golden Hour service worker: the app shell, cache-first, so the app opens offline. It never touches the
    forecast or map requests: the app keeps those itself, under its own request budget (docs/SPEC.md 11.3).
    A new version waits until the page asks it to take over ("Update ready. Reload."). */
-const CACHE = 'golden-hour-0.9.5';
+const CACHE = 'golden-hour-0.10.0';
 const SHELL = ['./', 'index.html', 'app.css', 'core.js', 'app.js', 'icon.svg', 'icon.png', 'manifest.webmanifest',
   'fonts/inter-latin-wght-normal.woff2', 'fonts/inter-latin-ext-wght-normal.woff2'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL))); });
