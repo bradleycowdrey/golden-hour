@@ -73,6 +73,17 @@ notifications or calendar feed yet; those need native code.
 The upload needs three repository secrets (`ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8`) and
 an app in App Store Connect with the bundle ID `com.bradcowdrey.goldenhour`.
 
+## Android
+
+`android/` holds a first Android app, built the same way as the iPhone one: the web app in a full-screen
+web view, loading the published site. Back goes back a step, Share and Add to calendar use Android's own
+screens, and links that leave the site open in their own apps.
+
+`.github/workflows/android.yml` builds it on every change. With the four `ANDROID_` secrets set
+(`ANDROID_KEYSTORE_B64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`) the
+release APK and bundle are signed with the upload key, and on `main` they are attached to the release for
+the current version: `GoldenHour.apk` installs directly, `GoldenHour.aab` is the file for Google Play.
+
 ## Testing
 
 - `node --test tests/core.test.js tests/moon.test.js tests/spots.test.js`: the rules (35 tests): the rating
