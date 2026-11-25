@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The page's own background (theme-color in web/index.html) and its amber accent. -->
+    <color name="ink">#1A1816</color>
+    <color name="amber">#F4B860</color>
+</resources>

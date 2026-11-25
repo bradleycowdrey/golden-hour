@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Golden Hour</string>
+    <string name="offline_title">Can’t reach Golden Hour</string>
+    <string name="offline_body">Check the connection and try again.</string>
+    <string name="offline_retry">Try again</string>
+    <string name="no_app">There’s no app on this phone to open that.</string>
+    <string name="no_calendar">There’s no calendar app on this phone to add it to.</string>
+    <string name="share_failed">Couldn’t share that. Try again.</string>
+</resources>
