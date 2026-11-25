@@ -1606,9 +1606,6 @@
   const appUrl = () => location.origin + location.pathname;
   /** Opens the share sheet straight from the tap. → true when it was shared or copied, false when cancelled. */
   async function shareOut(o) {
-    // The Android app has no web share sheet; it opens Android's own, with the words and the link.
-    const droid = window.GoldenHourAndroid;
-    if (droid && droid.share) { try { droid.share(o.title || 'Golden Hour', `${o.text}\n${o.url}`); return true; } catch { /* fall through */ } }
     try {
       if (o.file && navigator.canShare && navigator.canShare({ files: [o.file] })) { await navigator.share({ files: [o.file], title: o.title, text: `${o.text}\n${o.url}` }); return true; }
       if (navigator.share) { await navigator.share({ title: o.title, text: o.text, url: o.url }); return true; }
@@ -1823,7 +1820,7 @@
     keepFields(); autosave(); render();
   }
   /** The calendar event: from leave-by for the organiser, from be-there-by for someone it was shared with,
-      with a reminder half an hour before. In the iPhone and Android apps it opens the calendar's own "new event" screen. */
+      with a reminder half an hour before. In the iPhone app it opens Calendar's own "new event" sheet. */
   async function addToCalendar() {
     const shared = S.view.type === 'shared';
     const plan = shared ? S.view.plan : (keepFields(), autosave(), toPlan(S.view.draft));
@@ -1840,8 +1837,6 @@
       location: `${name} (${plan.spot.lat.toFixed(5)}, ${plan.spot.lon.toFixed(5)})`, description: lines.join('\n'), alarm: 30 };
     const native = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.goldenHour;
     if (native) { try { native.postMessage({ type: 'calendar', title: ev.title, start: ev.start, end: ev.end, location: ev.location, notes: ev.description, alarm: ev.alarm }); return; } catch { /* fall through to the file */ } }
-    const droid = window.GoldenHourAndroid;
-    if (droid && droid.calendar) { try { droid.calendar(JSON.stringify({ title: ev.title, start: Math.round(ev.start), end: Math.round(ev.end), location: ev.location, notes: ev.description })); return; } catch { /* fall through to the file */ } }
     const file = new File([G.ics(ev)], 'golden-hour.ics', { type: 'text/calendar' });
     try {
       if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: ev.title }); return; }
