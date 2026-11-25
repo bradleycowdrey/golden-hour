@@ -90,7 +90,7 @@ const server = http.createServer((req, res) => {
   async function open(opts) {
     const o = opts || {};
     const context = o.context || await browser.newContext({ viewport: o.viewport || { width: 390, height: 844 }, locale: 'en-US', timezoneId: 'America/Denver', serviceWorkers: 'block',
-      permissions: ['clipboard-read', 'clipboard-write'].concat(o.geo ? ['geolocation'] : []), geolocation: o.geo || undefined, deviceScaleFactor: 1 });
+      permissions: ['clipboard-read', 'clipboard-write'].concat(o.geo ? ['geolocation'] : []), geolocation: o.geo || undefined, deviceScaleFactor: o.scale || 1, bypassCSP: !!o.scale });
     if (!o.context) {
       await context.addInitScript(() => {
         window.__shares = [];
@@ -236,6 +236,37 @@ const server = http.createServer((req, res) => {
   const shares = (page) => page.evaluate(() => window.__shares);
   const waitPlaces = (page) => page.waitForFunction(() => { const g = window.__gh, d = g.DATA[g.S.current]; return d && d.spots && typeof d.spots === 'object' && d.near && typeof d.near === 'object'; }, null, { timeout: 15000 });
   const reset = () => Object.assign(net, { forecast: 'ok', geocode: 'ok', tiles: 'ok', overpass: 'ok', near: 'ok', photon: 'ok' });
+
+  // ---------- The App Store captures (scripts/store-frames.js frames them): STORE_SHOTS=<folder> ----------
+  // iPhone 6.9-inch (440 x 956 pt at 3x), with the room iOS leaves for the status bar and the home indicator.
+  if (process.env.STORE_SHOTS) {
+    const dir = process.env.STORE_SHOTS;
+    fs.mkdirSync(dir, { recursive: true });
+    const { page } = await open({ time: GO, viewport: { width: 440, height: 956 }, scale: 3 });
+    await page.addStyleTag({ content: '.page, .screen { padding-top: 62px !important } .bar { padding-bottom: 30px !important } .sheet-back { padding-top: 62px !important } .page, .screen { -webkit-mask-image: linear-gradient(transparent 46px, #000 64px); mask-image: linear-gradient(transparent 46px, #000 64px) }' });
+    await addPlace(page, 'Denv');
+    await waitPlaces(page);
+    await page.waitForTimeout(400);
+    const snap = async (name) => { await page.waitForTimeout(350); await page.screenshot({ path: path.join(dir, name + '.png') }); };
+    const scrollTo = (sel, gap) => page.evaluate(([q, g]) => { const e = document.querySelector(q); let s = e.parentElement; while (s && getComputedStyle(s).overflowY !== 'auto') s = s.parentElement; s.scrollTop += e.getBoundingClientRect().top - g; }, [sel, gap || 74]);
+    await snap('today');
+    await scrollTo(CUR + '.daily');
+    await snap('week');
+    await page.evaluate(() => { document.querySelector('.page[aria-current="true"]').scrollTop = 0; });
+    await page.click(CUR + '.pick .srow');
+    await page.waitForSelector('#sheet .spothero');
+    await snap('place');
+    await page.goBack();
+    await page.waitForSelector('#sheet .spothero', { state: 'detached' });
+    await page.click(CUR + '.pick [data-act="plan-new"]');
+    await page.waitForSelector('#spotName');
+    await snap('plan');
+    await scrollTo('.home', 470);
+    await snap('home');
+    await browser.close(); server.close();
+    console.log('App Store captures written to ' + dir);
+    return;
+  }
 
   // ---------- 1. First run: the sample, and the answer in ten seconds ----------
   {
