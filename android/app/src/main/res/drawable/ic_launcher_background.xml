@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- web/icon.svg's sky and ground. The icon's 512 units are the visible 72 dp, centred in the 108 dp layer
+     (768 units, so the icon starts at 128); the sky's colours carry on past the edges. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="768"
+    android:viewportHeight="768">
+    <path android:pathData="M0,0h768v768h-768z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:endX="0"
+                android:endY="640"
+                android:startX="0"
+                android:startY="128"
+                android:type="linear">
+                <item android:color="#FF1A1F4A" android:offset="0" />
+                <item android:color="#FF7A3B6B" android:offset="0.62" />
+                <item android:color="#FFE8824A" android:offset="1" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <!-- The ground, from the horizon (340 in the icon) down. -->
+    <path
+        android:fillColor="#FF1A1816"
+        android:pathData="M0,468h768v300h-768z" />
+</vector>

@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The same mark in one colour, for themed icons (Android 13 and later). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="768"
+    android:viewportHeight="768">
+    <group
+        android:translateX="128"
+        android:translateY="128">
+        <group>
+            <clip-path android:pathData="M-128,-128H640V340H-128Z" />
+            <path
+                android:pathData="M333.2,197.7A98,98 0,1 0,333.2 318.3"
+                android:strokeColor="#FFFFFFFF"
+                android:strokeLineCap="round"
+                android:strokeWidth="64" />
+        </group>
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M102,340H410A10,10 0,0 1,410 360H102A10,10 0,0 1,102 340Z" />
+        <path
+            android:fillAlpha="0.55"
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M158,392H354A8,8 0,0 1,354 408H158A8,8 0,0 1,158 392Z" />
+        <path
+            android:fillAlpha="0.3"
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M207,438H305A7,7 0,0 1,305 452H207A7,7 0,0 1,207 438Z" />
+    </group>
+</vector>

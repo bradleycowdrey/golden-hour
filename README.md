@@ -73,16 +73,19 @@ notifications or calendar feed yet; those need native code.
 The upload needs three repository secrets (`ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8`) and
 an app in App Store Connect with the bundle ID `com.bradcowdrey.goldenhour`.
 
-## Android
+## Android (Google Play closed test)
 
-`android/` holds a first Android app, built the same way as the iPhone one: the web app in a full-screen
-web view, loading the published site. Back goes back a step, Share and Add to calendar use Android's own
-screens, and links that leave the site open in their own apps.
+`android/` holds the Android app, made the same way: the web app in a full-screen web view, loading the
+published site, between status and navigation bars that take the page's colours. Back goes back a step in the
+page before leaving, links that leave the site open in their own apps, Share uses Android's share sheet, Add to
+calendar opens the calendar app's new-event screen (with the calendar's own reminder), and "Use my location"
+asks for approximate location only when tapped. It has no widget or notifications yet.
 
-`.github/workflows/android.yml` builds it on every change. With the four `ANDROID_` secrets set
-(`ANDROID_KEYSTORE_B64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`) the
-release APK and bundle are signed with the upload key, and on `main` they are attached to the release for
-the current version: `GoldenHour.apk` installs directly, `GoldenHour.aab` is the file for Google Play.
+`.github/workflows/android.yml` builds and unit-tests it on every change. With the upload key in four
+repository secrets (`ANDROID_KEYSTORE_B64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`,
+`ANDROID_KEY_PASSWORD`) it also builds the signed release, and runs on `main` started by hand or by a change
+to `VERSION` send it to Google Play's closed test (package `com.bradcowdrey.goldenhour`, coming soon to
+testers). The store listing and Play Console steps are in [docs/play/README.md](docs/play/README.md).
 
 ## Testing
 
