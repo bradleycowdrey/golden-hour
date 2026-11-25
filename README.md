@@ -73,6 +73,15 @@ notifications or calendar feed yet; those need native code.
 The upload needs three repository secrets (`ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8`) and
 an app in App Store Connect with the bundle ID `com.bradcowdrey.goldenhour`.
 
+## App Store screenshots
+
+`docs/app-store/iphone-1-tonight.png` to `iphone-6-tomorrow.png` are the iPhone 6.9" App Store screenshots (1320 × 2868),
+on the Cowdrey family's standard ([cowdrey-one `design/app-store/README.md`](https://github.com/bradleycowdrey/cowdrey-one/blob/main/design/app-store/README.md)):
+real captures of the app on the tests' stand-in Denver evening, framed by `design/app-store/store-frame.mjs`. Make them
+again with `scripts/build-web.sh && node tests/app-store-screens.mjs`; the Tests workflow does the same on every run
+and keeps them as its `app-store-screenshots` artifact. Nothing uploads them: add them on the app's page in App Store
+Connect (iPhone 6.9" Display). The app is for iPhone only, so there is no iPad set.
+
 ## Android (Google Play closed test)
 
 `android/` holds the Android app, made the same way: the web app in a full-screen web view, loading the
