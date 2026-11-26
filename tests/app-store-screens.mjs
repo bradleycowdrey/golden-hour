@@ -85,7 +85,7 @@ const CUR = '.page[aria-current="true"] ';
 // Scroll the page (or the open screen) so that the top of `sel` sits `y` points down the screen, then move it the least
 // (with `down`, only down the screen) that makes the screen start and end cleanly: nothing cut by the top of the screen
 // or by the tab bar, and no text under the Dynamic Island; failing that, no line of text cut by the island's top or
-// bottom (one may sit wholly behind it).
+// bottom, and none half behind it (one may sit wholly behind it). `y` may be 'here': where `sel` is now.
 async function scrollTo(page, scroller, sel, y, down) {
   await page.evaluate(([sc, s, y, down, island]) => {
     const box = document.querySelector(sc), bar = document.querySelector('#bar').getBoundingClientRect().top;
@@ -97,13 +97,14 @@ async function scrollTo(page, scroller, sel, y, down) {
         const range = document.createRange(); range.selectNodeContents(n);
         for (const q of range.getClientRects()) {
           if (across({ top: q.top - 4, bottom: q.bottom + 4 }, 0) || across({ top: q.top - 4, bottom: q.bottom + 4 }, bar)) return false;
-          const g = { top: q.top + 1, bottom: q.bottom - 1 }, top = island.top - 3, bottom = island.bottom + 3;   // with room around the island
-          if (q.right > island.left && q.left < island.right && (strict ? g.bottom > top && g.top < bottom : across(g, top) || across(g, bottom))) return false;
+          const g = { top: q.top + 1, bottom: q.bottom - 1 }, top = island.top - 3, bottom = island.bottom + 2;   // with room around the island (a line's box has its leading above the letters)
+          if (q.right > island.left && q.left < island.right && g.bottom > top && g.top < bottom &&
+            (strict || across(g, top) || across(g, bottom) || q.left < island.left || q.right > island.right)) return false;
         }
       }
       return !Array.from(box.querySelectorAll('img, svg, input, .btn, .ic')).some((el) => { const q = el.getBoundingClientRect(); return across(q, 0) || across(q, bar); });
     };
-    const base = box.scrollTop + document.querySelector(s).getBoundingClientRect().top - y;
+    const base = y === 'here' ? box.scrollTop : box.scrollTop + document.querySelector(s).getBoundingClientRect().top - y;
     for (const strict of [true, false]) {
       for (let d = 0; d <= 200; d++) for (const t of down ? [base - d] : [base - d, base + d]) { box.scrollTop = t; if (Math.abs(box.scrollTop - t) < 1 && clean(strict)) return; }
     }
@@ -116,7 +117,8 @@ const settle = (page, ms = 1200) => page.waitForTimeout(ms);
 // One idea each. Every headline is two lines (lines: 2), so the phone sits where every family app's does; the template then needs each sub-line to fit on one line.
 const STORIES = [
   { slug: 'tonight', head: 'Is tonight\nworth it?', sub: 'Go, Maybe or Not, why, and when to be there.',
-    async shoot(page) { await settle(page); } },
+    // As it opens, then down the least that ends the list at a row's end above the tab bar.
+    async shoot(page) { await settle(page); await scrollTo(page, CUR.trim(), CUR + '.hero', 'here'); await settle(page); } },
   { slug: 'plan', head: 'Plan the evening,\nstart to finish.', sub: 'When to leave, and when to head back by dark.',
     async shoot(page) {
       await page.click(CUR + '.pick [data-act="plan-new"]');
@@ -128,7 +130,7 @@ const STORIES = [
       await page.click(CUR + '.pick [data-act="plan-new"]');
       await page.waitForSelector('[data-act="share-go"]');
       await settle(page, 600);
-      await scrollTo(page, '.screen', '.acts', 56);
+      await scrollTo(page, '.screen', '.acts', 22);   // its card just below the island, the line above it gone over the top
       await settle(page);
     } },
   { slug: 'evenings-ahead', head: 'The evenings\nahead.', sub: 'The week’s sunsets rated, evening by evening.',
