@@ -202,7 +202,7 @@ const server = http.createServer((req, res) => {
     check((await text(page, CUR + '.hero h2')).includes('Sample'), 'first run: a sample town, labelled Sample');
     check(/^(Go|Maybe|Not) tonight$/.test((await text(page, CUR + '.hero .ans')).trim()), 'first run: the top of the page is the answer in words');
     check(/Sunset \d+:\d\d/.test(norm(await text(page, CUR + '.hero .atimes'))), 'first run: one time under it');
-    check(await page.locator(CUR + '.hero .score, ' + CUR + '.hero .stars').count() === 0, 'no score or stars on the first screen');
+    check(/^\d\.\d of 5$/.test(norm(await text(page, CUR + '.hero .hscore')).trim()) && await page.locator(CUR + '.hero .stars').count() === 0, 'the score sits beside the answer, on one line, with no stars');
     check(net.calls.length === 0, 'first run: nothing is fetched until a place is chosen');
     const tabs = (await page.locator('#bar .barbtn span').allInnerTexts()).map((t) => t.trim());
     check(tabs.join('|') === 'Today|Plans|Places' && await page.locator('#bar .barbtn[aria-current="page"]').innerText() === 'Today', 'the bar: Today, Plans, Places, with the one you are on marked');
@@ -270,7 +270,8 @@ const server = http.createServer((req, res) => {
     const exp = expectedDenver(0, 3), r = exp.rating;
     check(r.verdict === 'go', 'the stand-in forecast makes 23 June a Go');
     check((await text(page, CUR + '.hero .ans')).trim() === 'Go tonight' && (await text(page, CUR + '.hero .reason')).trim() === r.reason, 'the answer and its reason are the core’s for the same forecast');
-    check(norm(await text(page, CUR + '.hero .atimes')) === `Sunset ${fmt(exp.times.sunset)} · be there by ${fmt(exp.times.bestStart - 20 * MIN)}`, 'one time: sunset, and be there by 20 minutes before the best light');
+    const pickT = G.eveningTimes(G.solarNoonGuess(2026, 6, 23, OSM[0].lon), OSM[0].lat, OSM[0].lon);   // the place on top: its own times, as its plan shows
+    check(norm(await text(page, CUR + '.hero .atimes')) === `Sunset ${fmt(pickT.sunset)} · be there by ${fmt(pickT.bestStart - 20 * MIN)}`, 'one time: sunset, and be there by 20 minutes before the best light');
     check(/Outlook|Forecast|typical|°/.test(await text(page, CUR + '.hero')) === false, 'no “Outlook”, “Forecast”, “(typical)” or compass degrees on the answer');
     check((await text(page, CUR + '.pick .srow .n')).trim() === 'Inspiration Point' && (await text(page, CUR + '.pick [data-act="plan-new"]')).trim() === 'Plan this evening', 'one place: the top easy-to-reach one, with Plan this evening');
     check(await page.locator(CUR + '.dt').count() === 0 && await page.locator(CUR + '[data-act="details-toggle"]').getAttribute('aria-expanded') === 'false', 'the score and the tiles are one tap down, under Why');
@@ -279,11 +280,11 @@ const server = http.createServer((req, res) => {
     await layout(page, 'go evening (phone)'); await contrast(page, 'go evening');
     await shot(page, 'phone-today');
     await page.click(CUR + '[data-act="details-toggle"]');
-    check((await text(page, CUR + '.scorecard .big')).trim() === r.score.toFixed(1) && (await text(page, CUR + '.scorecard')).includes(`${r.colourClass} colour · ${r.colour} of 100`), `Why shows the score (${r.score.toFixed(1)}) and the colour class`);
+    check((await text(page, CUR + '.scorecard .big')).trim() === r.score.toFixed(1) && (await text(page, CUR + '.scorecard')).includes(`${r.colourClass} colour`) && !/of 100/.test(await text(page, CUR + '.scorecard')), `Why shows the score (${r.score.toFixed(1)}) and the colour class`);
     const strip = norm(await text(page, CUR + '.times'));
     check(['goldenStart', 'bestStart', 'sunset', 'afterglowEnd', 'lastLight'].every((k) => strip.includes(fmt(exp.times[k]))), 'and the five times, to the minute');
     check(await page.locator(CUR + '.dt').count() === 15 && await page.evaluate(() => localStorage.getItem('gh.details')) === 'true', 'and every tile; the choice is remembered');
-    check(/flat horizon/.test(await text(page, CUR + '.daily, ' + CUR + '.card:has(.evpath)')), 'a note says times assume a flat horizon');
+    check(/flat horizon/.test(await text(page, CUR + '.card:has(.evpath)')), 'a note says times assume a flat horizon');
     await shot(page, 'phone-why');
     await page.click(CUR + '[data-act="details-toggle"]');
     // The week

@@ -870,7 +870,7 @@
     const r = ev.rating;
     const range = rangeText(r);
     return `<section class="card scorecard"><p class="eyebrow">${TI.colour}<span>The rating</span></p>
-      <div class="tonight"><span class="big num">${scoreText(r)}</span><span class="tl2"><b class="c-${r.colourClass.toLowerCase()}">${r.colourClass} colour · ${r.colour} of 100</b>
+      <div class="tonight"><span class="big num">${scoreText(r)}</span><span class="tl2"><b class="c-${r.colourClass.toLowerCase()}">${r.colourClass} colour</b>
         <span class="small">${range.charAt(0).toUpperCase() + range.slice(1)} out of 5${r.tier === 'outlook' ? '. Three to five days out, so it could change' : ''}.</span></span></div>${deltaLine(p, ev)}</section>`;
   }
   function whyFold(ev, p) {
@@ -878,22 +878,36 @@
     if (!r) return '';
     const open = store.get('details', false);
     const head = `<section class="fold"><button type="button" class="foldrow" data-act="details-toggle" aria-expanded="${open}">
-        <span class="ft"><b>Why</b><small>${scoreText(r)} of 5 · ${r.colourClass} colour · the evening’s times</small></span>
+        <span class="ft"><b>Why ${scoreText(r)}</b><small>What the score is made of, and the evening’s times</small></span>
         <span class="fa">${open ? 'Hide' : 'Show'}</span><span class="chev${open ? ' up' : ''}">${SP.chev}</span></button></section>`;
     return open ? `${head}${scoreCard(ev, p)}${eveningCard(ev, p)}${tilesHtml(ev, p)}` : head;
   }
 
-  /** The answer: go or not, why, and one time. */
+  /** The evening's times at one spot on one date. */
+  function timesAt(spot, date) {
+    const [y, m, d] = ymd(date);
+    return G.eveningTimes(G.solarNoonGuess(y, m + 1, d, spot.lon), spot.lat, spot.lon);
+  }
+  /** The times the top of the page shows: the chosen place's own, so the page, the place and the plan agree to the minute. */
+  function shownTimes(p, ev) {
+    const best = ev.rating && ev.rating.verdict !== 'skip' && ev.times.state !== 'none' ? bestPlace(p) : null;
+    if (!best || best.lat == null) return ev.times;
+    const t = timesAt(best, ev.date);
+    return t.state === 'none' || t.sunset == null ? ev.times : t;
+  }
+
+  /** The answer: go or not, the score, why, and one time. */
   function answerBlock(ev, p, evs) {
-    const r = ev.rating, t = ev.times, next = r.verdict === 'skip' ? nextGood(evs, ev) : null;
+    const r = ev.rating, t = shownTimes(p, ev), next = r.verdict === 'skip' ? nextGood(evs, ev) : null;
     const tail = r.verdict === 'skip' ? (next ? ` Try ${esc(dayName(next.date, true))}.` : '') : r.tier === 'outlook' ? ' Could change.' : '';
-    return `<p class="ans" aria-hidden="true">${icon(r)}<span>${esc(answerText(ev))}</span></p>
+    return `<div class="ansrow" aria-hidden="true"><p class="ans">${icon(r)}<span>${esc(answerText(ev))}</span></p><p class="hscore c-${r.colourClass.toLowerCase()}"><b class="num">${scoreText(r)}</b> of 5</p></div>
       <p class="reason" aria-hidden="true">${esc(r.reason)}${tail}</p>
       <p class="atimes" aria-hidden="true"><b>Sunset ${esc(timeText(t.sunset, p.tz))}</b>${r.verdict === 'skip' ? '' : ` · be there by ${esc(timeText(t.bestStart - 20 * MIN, p.tz))}`}</p>`;
   }
   function spokenAnswer(ev, p, evs) {
     const r = ev.rating, next = r.verdict === 'skip' ? nextGood(evs, ev) : null;
-    return `${p.name}. ${answerText(ev)}. ${r.reason}${next ? ` Try ${dayName(next.date, true)}.` : ''} Sunset ${timeText(ev.times.sunset, p.tz)}${r.verdict === 'skip' ? '' : `, be there by ${timeText(ev.times.bestStart - 20 * MIN, p.tz)}`}.`;
+    const t = shownTimes(p, ev);
+    return `${p.name}. ${answerText(ev)}, ${scoreText(r)} out of 5. ${r.reason}${next ? ` Try ${dayName(next.date, true)}.` : ''} Sunset ${timeText(t.sunset, p.tz)}${r.verdict === 'skip' ? '' : `, be there by ${timeText(t.bestStart - 20 * MIN, p.tz)}`}.`;
   }
   function updatedLine(p) {
     const d = DATA[p.id] || {};
@@ -955,7 +969,7 @@
   /** One place's page: the answer, one time, one place and the way to plan it; then why, more places and the week. */
   function pageHtml(p) {
     const d = DATA[p.id] || {}, evs = evenings(p), f = focusDay(p, evs), ev = evs[f], r = ev.rating;
-    const head = `${r ? `<button type="button" class="circle heroshare" data-act="share-today" aria-label="Share ${esc(whenWord(ev))}’s sunset">${SP.share}</button>` : ''}<h2>${esc(p.name)}${p.sample ? ' <span class="tag">Sample</span>' : ''}</h2>
+    const head = `${r ? `<button type="button" class="circle heroshare" data-act="share-today" aria-label="Share ${esc(whenWord(ev))}’s sunset">${SP.share}</button>` : ''}<button type="button" class="circle herogear" data-act="settings" aria-label="Settings">${BAR.gear}</button><h2>${esc(p.name)}${p.sample ? ' <span class="tag">Sample</span>' : ''}</h2>
       <p class="when">${esc(dayName(ev.date, true))}, ${esc(dateText(ev.date))}${p.region ? ` · ${esc(p.region)}` : ''}</p>`;
     let hero;
     if (ev.times.state === 'none') hero = `<section class="hero">${head}<p class="none">No sunset here on this date</p><p class="reason">${ev.times.polar === 'day' ? 'The sun stays up all night.' : 'The sun stays below the horizon.'}</p></section>`;
@@ -970,8 +984,8 @@
     const sample = p.sample ? `<section class="card ask"><h3>This is a sample forecast</h3><p>Add where you are to see the real one.</p><div class="row" data-gap><button type="button" class="btn white" data-act="add-place">Add my place</button></div></section>` : '';
     const lone = !p.sample && S.places.length === 1 ? '<span>Add another place to swipe between them. </span>' : '';
     return `<div class="two"><div class="col">${hero}${warns}${pickCard(p, ev, evs)}${sample}${howWasIt(p, evs)}</div>
-      <div class="col">${whyFold(ev, p)}${ev.times.state === 'none' ? '' : morePlaces(p, ev)}${weekCard(p, evs)}</div></div>
-      <p class="small pagefoot">${lone}<button type="button" class="link" data-act="settings">Settings, units and credits</button></p>`;
+      <div class="col">${weekCard(p, evs)}${ev.times.state === 'none' ? '' : morePlaces(p, ev)}${whyFold(ev, p)}</div></div>
+      <p class="small pagefoot">${lone}</p>`;
   }
 
   // ---------- Sheets: a day, a place, the place picker and Settings, over whatever is showing ----------
@@ -1112,7 +1126,8 @@
     const label = ev.day === 0 ? 'Today' : ev.day === 1 ? 'Tomorrow' : dayName(ev.date, true), short = ev.day === 0 ? 'Today' : dayName(ev.date);
     const mark = !ev.rating || ev.rating.verdict !== 'go' ? '' : ev.rating.score >= 4.5 ? 'Great' : 'Good';
     const d = `<span class="d">${esc(short)}${mark ? `<small class="best">${mark}</small>` : ''}</span>`;
-    const sunset = ev.times.sunset == null ? '' : esc(timeText(ev.times.sunset, p.tz));
+    const st = ev.day === 0 ? shownTimes(p, ev) : ev.times;   // today's row matches the top of the page
+    const sunset = st.sunset == null ? '' : esc(timeText(st.sunset, p.tz));
     if (ev.times.state === 'none') return `<div class="day none">${d}<span class="why">No sunset here on this date</span><span class="hi"></span></div>`;
     if (!ev.rating) return `<div class="day none">${d}<span class="why">${ev.day > 5 ? 'Too early to call' : 'No forecast yet'}</span><span class="hi"><span>Sunset ${sunset}</span></span></div>`;
     const r = ev.rating, out = r.tier === 'outlook', cls = r.colourClass.toLowerCase();
@@ -1238,7 +1253,7 @@
         <label class="wide">Note for whoever you share it with<input id="planNote" maxlength="200" value="${esc(dr.note || '')}" placeholder="Park in car park B" autocomplete="off"></label>
       </div>`}</section>`;
     if (!mo.pt) return `${head}<div class="two"><div class="col"><section class="card"><p class="eyebrow">The evening</p><p>No sunset here on this date.</p></section></div><div class="col">${placeCard}</div></div>`;
-    const leaveSub = dr.start ? `From ${esc(dr.start.label)}: about ${mo.travel} min${dr.travelMin != null ? '' : mo.km >= 0.2 ? ` (${dist(mo.km * 1.4)} by road, roughly)` : ''}, ${dr.walkIn} min walk in, ${mo.buffer} min to spare` : '';
+    const leaveSub = dr.start ? `From ${esc(dr.start.label)}: about ${mo.travel} min${dr.travelMin != null ? '' : mo.km >= 0.2 ? ` (${dist(mo.km)} away)` : ''}, ${dr.walkIn} min walk in, ${mo.buffer} min to spare` : '';
     const upd = p && DATA[p.id] && DATA[p.id].fetchedAt && DATA[p.id].source !== 'sample' ? timeText(DATA[p.id].fetchedAt, tz) : null;
     const timesCard = `<section class="card"><p class="eyebrow">The evening</p>${answer}
       ${changed ? `<p class="chg" role="note">${esc(changed)}${better ? ` ${esc(dayName(better.date, true))} looks better.` : ''}</p>` : ''}
@@ -1248,12 +1263,12 @@
       <button type="button" class="btn quiet" data-act="start-here">Use my location</button>${p && dr.start.kind !== 'place' ? `<button type="button" class="btn quiet" data-act="start-place">Use ${esc(p.name)}</button>` : ''}</div>` : ''}
       <p class="small muted">Travel time is an estimate.${mo.hasPin ? ` <a href="${esc(directionsUrl(dr.spot))}" target="_blank" rel="noopener">Check in Maps</a>.` : ''}</p></section>`;
     const sent = dr.sent, moved = sent && mo.hasPin && (sent.meetAt !== mo.pt.meetAt || sent.date !== dr.date || sent.name !== dr.spot.name);
-    const actions = mo.hasPin ? `<section class="card acts"><div class="row"><button type="button" class="btn primary" data-act="share-go">${SP.share}${sent ? 'Share again' : 'Share'}</button>
+    const actions = mo.hasPin ? `<section class="acts planacts"><div class="row"><button type="button" class="btn primary" data-act="share-go">${SP.share}${sent ? 'Share again' : 'Share'}</button>
         ${moved ? `<button type="button" class="btn white" data-act="share-update">Send update</button>` : ''}
-        <button type="button" class="btn" data-act="calendar">Add to calendar</button><a class="btn" target="_blank" rel="noopener" href="${esc(directionsUrl(dr.spot))}">Directions</a></div>
-        <p class="small muted" data-gap>Sharing sends a picture and a link. Anyone with the link sees the place, the times and your note, never where you’re leaving from.</p>
-        <div class="row" data-gap><span class="small muted">Saved on this device.</span><span class="sp"></span><button type="button" class="btn quiet danger" data-act="plan-del">Delete plan</button></div></section>`
-      : `<section class="card acts"><p>Choose the place to share this plan.</p><div class="row" data-gap><span class="sp"></span><button type="button" class="btn quiet danger" data-act="plan-del">Delete plan</button></div></section>`;
+        <button type="button" class="btn" data-act="calendar">Add to calendar</button><a class="btn" target="_blank" rel="noopener" href="${esc(directionsUrl(dr.spot))}">Directions</a></div></section>`
+      : '<section class="acts planacts"><p class="small">Choose the place to share this plan.</p></section>';
+    const foot = `<section class="card planfoot">${mo.hasPin ? '<p class="small muted">Sharing sends a picture and a link. Anyone with the link sees the place, the times and your note, never where you’re leaving from.</p>' : ''}
+        <div class="row" data-gap><span class="small muted">Saved on this device.</span><span class="sp"></span><button type="button" class="btn quiet danger" data-act="plan-del">Delete plan</button></div></section>`;
     const items = mo.items;
     const bring = `<section class="card"><p class="eyebrow">What to bring</p><div class="items">${items.length ? items.map((it, i) => `<div class="item${it.done ? ' done' : ''}">
         <input type="checkbox" id="it${i}" data-act="tick" data-i="${i}"${it.done ? ' checked' : ''} aria-label="${esc(it.name)}">
@@ -1263,7 +1278,7 @@
     const home = gettingHome({ pt: mo.pt, tz, walkIn: dr.walkIn, spot: mo.hasPin ? dr.spot : { name: dr.spot.name, lat: null }, twilight: mo.times.state === 'twilight', date: dr.date,
       homeBy: clockOn(dr.date, dr.homeBy, tz), travel: mo.travel });
     preparePlanCard();
-    return `${head}<div class="two"><div class="col">${timesCard}${actions}${home}</div><div class="col">${placeCard}${lightCard(mo.ev, tz, upd)}${bring}</div></div>`;
+    return `${head}${actions}<div class="two"><div class="col">${timesCard}${home}</div><div class="col">${placeCard}${lightCard(mo.ev, tz, upd)}${bring}${foot}</div></div>`;
   }
 
   function directionsUrl(spot) {
@@ -1565,8 +1580,9 @@
     if (sp.ele != null && sp.gain != null && sp.gain > 50) facts.push(`${Math.round(sp.gain * 3.28084).toLocaleString('en-US')} ft · ${Math.round(sp.gain).toLocaleString('en-US')} m above ${esc(p.name)}.`);
     if (sp.faces === true) facts.push('Faces the sunset.');
     if (sp.faces === false) facts.push('Faces away from the sunset: look for a clear view west.');
-    if (ev.times.lastLight != null) facts.push(`${ev.day === 0 ? 'Tonight' : 'That evening'} it is dark by ${esc(timeText(ev.times.lastLight, p.tz))}. Lighting not listed.`);
-    const tonight = r ? `<p class="planans v ${r.verdict}">${icon(r)}<b>${esc(answerText(ev))}</b></p><p class="small">Sunset ${esc(timeText(ev.times.sunset, p.tz))}, be there by ${esc(timeText(ev.times.bestStart - 20 * MIN, p.tz))}.${km > 15 ? ` Forecast for ${esc(p.name)}; a plan uses the forecast here.` : ''}</p>` : '';
+    const stx = sp.lat != null ? timesAt(sp, ev.date) : null, st = stx && stx.sunset != null ? stx : ev.times;   // the place's own times, as its plan will show
+    if (st.lastLight != null) facts.push(`${ev.day === 0 ? 'Tonight' : 'That evening'} it is dark by ${esc(timeText(st.lastLight, p.tz))}. Lighting not listed.`);
+    const tonight = r ? `<p class="planans v ${r.verdict}">${icon(r)}<b>${esc(answerText(ev))}</b></p><p class="small">Sunset ${esc(timeText(st.sunset, p.tz))}, be there by ${esc(timeText(st.bestStart - 20 * MIN, p.tz))}.${km > 15 ? ` Forecast for ${esc(p.name)}; a plan uses the forecast here.` : ''}</p>` : '';
     const links = [sp.website ? `<a class="btn" href="${esc(sp.website)}" target="_blank" rel="noopener">Website</a>` : '', sp.phone ? `<a class="btn" href="tel:${esc(sp.phone.replace(/[^\d+]/g, ''))}">Call</a>` : ''].join('');
     const canPlan = now() < endOf(ev, p);
     return `<div class="sh-head"><button type="button" class="done" data-act="sheet-close">Done</button><h2 id="sheetTitle">${esc(sp.kind || G.SPOT_CAT[sp.cat] || 'Your spot')}</h2>
