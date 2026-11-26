@@ -1,0 +1,10 @@
+The two fonts in this folder draw the App Store screenshots' headlines and sub-lines (tests/app-store-screens.mjs).
+The app itself doesn't use them. Both are copied from bradleycowdrey/cowdrey-one, whose type the family's App Store
+pictures share.
+
+fraunces.woff2         Fraunces. Copyright 2020 The Fraunces Project Authors (github.com/undercasetype/Fraunces).
+                       SIL Open Font License, Version 1.1: the full text is in Fraunces-LICENSE.txt.
+
+instrument-sans.woff2  Instrument Sans. Copyright 2022 The Instrument Sans Project Authors
+                       (github.com/Instrument/instrument-sans). SIL Open Font License, Version 1.1: the same licence
+                       text as in Fraunces-LICENSE.txt, under this copyright line.

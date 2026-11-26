@@ -15,3 +15,9 @@ jobs:
       - run: scripts/build-web.sh && git diff --exit-code docs
       - run: npm install --no-save playwright@1 && npx playwright install --with-deps chromium
       - run: node tests/web.test.js
+      - name: App Store screenshots (docs/app-store, on the family template)
+        run: node tests/app-store-screens.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-store-screenshots
+          path: docs/app-store/*.png
