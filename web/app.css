@@ -718,3 +718,10 @@ svg.horizon text { font: 500 14px var(--font); fill: rgba(255,255,255,.8); color
 .anydate input, .dateline input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; }
 .dateline { display: inline-flex; align-items: center; min-height: 44px; padding: 0 14px; border-radius: 12px; background: rgba(0,0,0,.28); }
 .dateline .datetext { font-size: 15px; font-weight: 500; color: #fff; }
+
+/* ---------- Round 3: one verdict word per evening, and the reason ---------- */
+.day { grid-template-columns: 52px 52px 36px minmax(0, 1fr) 14px; }
+.day .ic small.best { font-size: 13px; font-weight: 600; }
+.day .ic.go small.best { color: #FFD08A; }
+.day .chev svg { display: block; width: 14px; height: 14px; color: var(--t70); }
+.pnote { margin: 8px 2px 0; color: var(--t85); }

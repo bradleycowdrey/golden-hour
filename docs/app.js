@@ -950,7 +950,8 @@
       const w = G.lightWindows(ev.times), short = (ms) => f(ms).replace(/\s?[ap]m$/i, '');
       facts = `<div class="pfacts"><span><small>Leave by</small><b class="num">${f(pt.leaveBy)}</b></span>
         ${w ? `<span><small>Golden hour</small><b class="num">${short(w.golden[0])}–${short(w.golden[1])}</b></span>` : ''}
-        ${ev.times.state === 'ok' ? `<span><small>Start back by</small><b class="num">${f(G.startBackBy(pt, walkIn))}</b></span>` : ''}</div>`;
+        ${ev.times.state === 'ok' ? `<span><small>Start back by</small><b class="num">${f(G.startBackBy(pt, walkIn))}</b></span>` : ''}</div>
+        <p class="small pnote">${[ev.x && ev.x.apparent != null ? `Feels like ${two(G.tempText(ev.x.apparent, settings.imperialFirst))} at sunset` : '', walkIn ? `${walkIn} min walk from the car` : '', best.wheelchair === 'yes' ? 'step-free' : best.wheelchair === 'no' ? 'not step-free' : '', ev.times.state === 'ok' ? `dark by ${f(ev.times.lastLight)}` : ''].filter(Boolean).join(' · ')}.</p>`;
     }
     return `<section class="card pick"><p class="eyebrow">${best && best.cat === 'own' ? 'Your spot' : 'Where to watch'}</p>
       ${best ? spotRow(best, p, null, null, null, nearText(p, best)) : placesState(p)}${facts}
@@ -965,7 +966,7 @@
     if (s) { picks.push(...s.easy.slice(0, 2), ...s.dining.slice(0, 1)); if (r && r.verdict === 'go') picks.push(...s.adventurous.slice(0, 1)); }
     // With an answer, the first place is already on top; without one (no forecast yet) the places still show here.
     const rows = picks.filter((x) => !r || !best || x.id !== best.id).slice(0, 3);
-    return `<section class="card moreplaces"><p class="eyebrow">${r ? 'More places' : 'Where to watch'}</p>${rows.length ? rows.map((x) => spotRow(x, p, null, null, null, nearText(p, x))).join('') : r && best ? '' : placesState(p)}${all}</section>`;
+    return `<section class="card moreplaces"><p class="eyebrow">${r ? 'More places' : 'Where to watch'}</p>${rows.length ? rows.map((x) => spotRow(x, p, null, null, null, /nearby/.test(nearText(p, x)) ? nearText(p, x) : '')).join('') : r && best ? '' : placesState(p)}${all}</section>`;
   }
   function weekCard(p, evs) {
     const later = evs.find((e) => !e.rating && e.day > 5), today = localDate(now(), p.tz);
@@ -974,7 +975,7 @@
       <div class="days">${evs.filter((e) => (rated ? e.rating || e.times.state === 'none' : e.day <= 5)).map((e) => dayRow(e, p)).join('')}
         ${rated && unrated ? `<div class="day later"><span class="why">${esc(dayName(unrated.date, true))} onwards: too early for colour</span></div>` : !rated && later ? `<div class="day later"><span class="why">${esc(dayName(later.date, true))}, ${esc(dateText(later.date))} and beyond: too early for colour</span></div>` : ''}</div>
       <label class="anydate"><span class="btn">Pick another date</span><input type="date" id="anyDate" data-place="${esc(p.id)}" min="${today}" max="${addDays(today, 366)}" aria-label="See the sunset times on another date"></label>
-      <p class="small muted" data-gap>Tap an evening for more. Three to five days out could change. Sunset times are exact for any date.</p></section>`;
+      <p class="small muted" data-gap>${evs[0].times.sunset != null ? `Sunset is about ${esc(timeText(evs[0].times.sunset, p.tz))} all week. ` : ''}Tap an evening for its times. Three to five days out could change.</p></section>`;
   }
 
   /** One place's page: the answer, one time, one place and the way to plan it; then why, more places and the week. */
@@ -1004,7 +1005,7 @@
   function lightCard(ev, tz, deciding) {
     const t = ev.times, w = G.lightWindows(t), f = (ms) => esc(timeText(ms, tz));
     if (!w) return '';
-    const rows = [`<li><span><b>Golden hour ${f(w.golden[0])} to ${f(w.golden[1])}</b><br><span class="small muted">Low, warm light: the time for portraits.</span></span></li>`];
+    const rows = [`<li><span><b>Golden hour ${f(w.golden[0])} to ${f(w.golden[1])}</b><br><span class="small muted">The sun low and warm, through sunset${t.sunset != null ? ` at ${f(t.sunset)}` : ''} and into the afterglow.</span><br><span class="small muted">Low, warm light: the time for portraits.</span></span></li>`];
     if (w.blue) rows.push(`<li><span><b>Blue hour ${f(w.blue[0])} to ${f(w.blue[1])}</b><br><span class="small muted">Soft blue light after the glow fades, then dark.</span></span></li>`);
     if (t.azimuth != null) rows.push(`<li><span>The sun sets to the ${esc(compass(t.azimuth))} (${pointOf(t.azimuth)}, ${Math.round(t.azimuth)}°).</span></li>`);
     if (deciding && ev.rating && ev.day <= 1) {
@@ -1135,18 +1136,18 @@
       the colour, and the colour class over the sunset time. */
   function dayRow(ev, p) {
     const label = ev.day === 0 ? 'Today' : ev.day === 1 ? 'Tomorrow' : dayName(ev.date, true), short = ev.day === 0 ? 'Today' : dayName(ev.date);
-    const mark = !ev.rating || ev.rating.verdict !== 'go' ? '' : ev.rating.score >= 4.5 ? 'Great' : 'Good';
-    const d = `<span class="d">${esc(short)}${mark ? `<small class="best">${mark}</small>` : ''}</span>`;
+    const word = !ev.rating ? '' : ev.rating.verdict !== 'go' ? answerShort(ev.rating) : Number(scoreText(ev.rating)) >= 4.5 ? 'Great' : 'Good';
+    const d = `<span class="d">${esc(short)}</span>`;
     const st = ev.times;
     const sunset = st.sunset == null ? '' : esc(timeText(st.sunset, p.tz));
     if (ev.times.state === 'none') return `<div class="day none">${d}<span class="why">No sunset here on this date</span><span class="hi"></span></div>`;
     if (!ev.rating) return `<div class="day none">${d}<span class="why">${ev.day > 5 ? 'Too early to call' : 'No forecast yet'}</span><span class="hi"><span>Sunset ${sunset}</span></span></div>`;
     const r = ev.rating, out = r.tier === 'outlook', cls = r.colourClass.toLowerCase();
     return `<button type="button" class="day${out ? ' outlook' : ''}" data-act="day" data-date="${ev.date}" data-place="${esc(p.id)}" aria-label="${esc(label)}. ${esc(answerShort(r))}. ${esc(r.reason)}">${d}
-      <span class="ic v ${r.verdict}" aria-hidden="true">${icon(r)}<small>${answerShort(r)}</small></span>
+      <span class="ic v ${r.verdict}" aria-hidden="true">${icon(r)}<small class="best">${word}</small></span>
       <span class="sc num" aria-hidden="true">${scoreText(r)}</span>
-      <span class="why1" aria-hidden="true">${esc(r.colourClass)} colour</span>
-      <span class="hi" aria-hidden="true"><span>${sunset}</span></span></button>`;
+      <span class="why1" aria-hidden="true">${esc(r.reason)}</span>
+      <span class="chev" aria-hidden="true">${SP.chev}</span></button>`;
   }
 
   // ---------- Plans ----------
@@ -1203,10 +1204,10 @@
     const start = pt.headBackBy - (o.walkIn || 0) * MIN;
     return `<div class="timeline">
       ${o.leave ? row('', pt.leaveBy, 'Leave by', o.leave) : ''}
-      ${row('', pt.meetAt, 'Be there by', o.own ? 'The time you set' : 'Settled 20 minutes before the best light')}
+      ${row('', pt.meetAt, 'Be there by', o.own ? 'The time you set' : `Settled 20 minutes before the best colour, from about ${esc(timeText(pt.meetAt + 20 * MIN, tz))}`)}
       ${row('sun', pt.sunset, 'Sunset', 'Stay: the best colour often comes after the sun is down')}
       ${row('', pt.stayUntil, 'Afterglow ends', o.twilight ? 'Twilight lasts all night here' : 'The last of the colour')}
-      ${row('', start, 'Start back by', o.twilight ? 'It stays light' : `To be back before dark at ${esc(timeText(pt.headBackBy, tz))}`)}
+      ${row('', start, 'Start back by', o.twilight ? 'It stays light' : `${o.walkIn ? `A ${o.walkIn}-minute walk: at your car` : 'Leave'} before dark at ${esc(timeText(pt.headBackBy, tz))}`)}
     </div>`;
   }
 
@@ -1566,7 +1567,7 @@
     const lists = !s ? `<section class="card">${placesState(p)}</section>` : `${none}<div class="spotgrid wide">${CATS.map((c) => part(c, s[c.key])).join('')}</div>`;
     const myFit = filtering && total ? mine.filter((x) => passes(p, x)) : mine;
     return `<div class="row top"><button type="button" class="btn quiet back" data-act="close-view">‹ ${esc(p.name)}</button></div>
-      <header class="screenhead"><h1>Places</h1><p>Where to watch the sunset near ${esc(p.name)}${p.sample ? ' (sample)' : ''}</p></header>
+      <header class="screenhead"><h1>Near ${esc(p.name)}</h1><p>Where to watch the sunset${p.sample ? ' (sample)' : ''}</p></header>
       ${chips}${d.near === 'error' && showNear ? '<p class="pstate">Couldn’t check for parking and toilets. <button type="button" class="link" data-act="near-retry">Try again</button></p>' : ''}
       ${lists}
       <section class="card spotcard a-own"><p class="eyebrow">${SP.heart}<span>Your spots</span></p><p class="catsub">Places you love to watch from. Only on this device.</p>

@@ -277,7 +277,8 @@ const server = http.createServer((req, res) => {
     const pf = norm(await text(page, CUR + '.pick .pfacts')).replace(/\s+/g, ' ');
     check(/Leave by \d+:\d\d pm/.test(pf) && /Golden hour/.test(pf) && pf.includes(`Start back by ${fmt(pickT.lastLight - 5 * MIN)}`), 'the place on top says when to leave, the golden hour and when to start back');
     check(/Parking and toilets nearby/.test(await text(page, CUR + '.pick .srow')) && await page.locator(CUR + '.pick a.btn').innerText() === 'Directions', 'with parking and toilets on its row, and Directions beside the plan button');
-    check(norm(await text(page, CUR + 'button.day >> nth=0')).includes(fmt(pickT.sunset)), 'today’s row in the week shows the same sunset as the top');
+    check(norm(await text(page, CUR + '.daily')).includes(`Sunset is about ${fmt(pickT.sunset)} all week`), 'the week says the same sunset time as the top');
+    check((await page.locator(CUR + 'button.day .ic small').allInnerTexts()).every((w) => ['Great', 'Good', 'Maybe', 'Skip'].includes(w.trim())), 'each evening has one word: Great, Good, Maybe or Skip');
     check(/Outlook|Forecast|typical|°/.test(await text(page, CUR + '.hero')) === false, 'no “Outlook”, “Forecast”, “(typical)” or compass degrees on the answer');
     check((await text(page, CUR + '.pick .srow .n')).trim() === 'Inspiration Point' && (await text(page, CUR + '.pick [data-act="plan-new"]')).trim() === 'Plan this evening', 'one place: the top easy-to-reach one, with Plan this evening');
     check(await page.locator(CUR + '.dt').count() === 0 && await page.locator(CUR + '[data-act="details-toggle"]').getAttribute('aria-expanded') === 'false', 'the score and the tiles are one tap down, under Why');
