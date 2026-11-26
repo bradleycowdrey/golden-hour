@@ -83,33 +83,66 @@ async function app() {
 }
 const CUR = '.page[aria-current="true"] ';
 // Scroll the page (or the open screen) so that the top of `sel` sits `y` points down the screen, then move it the least
-// (with `down`, only down the screen) that makes the screen start and end cleanly: nothing cut by the top of the screen
-// or by the tab bar, and no text under the Dynamic Island; failing that, no line of text cut by the island's top or
-// bottom, and none half behind it (one may sit wholly behind it). `y` may be 'here': where `sel` is now.
-async function scrollTo(page, scroller, sel, y, down) {
-  await page.evaluate(([sc, s, y, down, island]) => {
+// (with `down`, only down the screen) that makes the screen start and end cleanly, for text and controls alike:
+//  - no line of text, and no control (a button, pill, chip, field, picture or icon), cut by the tab bar: even a sliver of
+//    one showing above the bar counts as cut, and a card shows more than a sliver above it or nothing; nor any line of
+//    text, button, field, picture or icon cut by the top of the screen (a card or row may run up under the status bar);
+//  - nothing partly under the Dynamic Island: no control's box, and no card's top or bottom edge, in the island's band
+//    where it reaches under it, and no text under it; failing that, a line of text may sit wholly behind the island, but
+//    none cut by its top or bottom or half behind it (a control never may).
+// `y` may be 'here': where `sel` is now.
+async function scrollTo(page, scroller, sel, y, down, reach = 200) {
+  await page.evaluate(([sc, s, y, down, island, reach]) => {
     const box = document.querySelector(sc), bar = document.querySelector('#bar').getBoundingClientRect().top;
     const across = (q, edge) => q.top < edge && q.bottom > edge;
-    const clean = (strict) => {
+    const top = island.top - 3, bottom = island.bottom + 2;   // the island, with room around it
+    const underIsland = (q) => q.right > island.left && q.left < island.right && q.bottom > top && q.top < bottom;
+    const shown = (el) => { const cs = getComputedStyle(el); return cs.visibility !== 'hidden' && cs.display !== 'none' && +cs.opacity > 0; };
+    // A control's visible box: its own when it is a pill or a field, with a fill or a border all round (a quiet button, or a
+    // list row with only a hairline between rows, is just its text, which the text rule covers).
+    const filled = (el) => { const cs = getComputedStyle(el); return !/rgba\(0, 0, 0, 0\)|transparent/.test(cs.backgroundColor) || cs.backgroundImage !== 'none' ||
+      ['Top', 'Right', 'Bottom', 'Left'].every((side) => parseFloat(cs['border' + side + 'Width']) > 0); };
+    const CONTROLS = 'button, .btn, .chip, input, select, textarea, [role="button"], [role="tab"], img, svg, .ic';
+    const fault = (strict) => {
       const walker = document.createTreeWalker(box, NodeFilter.SHOW_TEXT);
       for (let n = walker.nextNode(); n; n = walker.nextNode()) {
         if (!n.textContent.trim()) continue;
         const range = document.createRange(); range.selectNodeContents(n);
         for (const q of range.getClientRects()) {
-          if (across({ top: q.top - 4, bottom: q.bottom + 4 }, 0) || across({ top: q.top - 4, bottom: q.bottom + 4 }, bar)) return false;
-          const g = { top: q.top + 1, bottom: q.bottom - 1 }, top = island.top - 3, bottom = island.bottom + 2;   // with room around the island (a line's box has its leading above the letters)
-          if (q.right > island.left && q.left < island.right && g.bottom > top && g.top < bottom &&
-            (strict || across(g, top) || across(g, bottom) || q.left < island.left || q.right > island.right)) return false;
+          if (across({ top: q.top - 4, bottom: q.bottom + 4 }, 0) || across({ top: q.top - 4, bottom: q.bottom + 4 }, bar)) return 'text cut: ' + n.textContent.trim().slice(0, 30);
+          const g = { top: q.top + 1, bottom: q.bottom - 1, left: q.left, right: q.right };   // a line's box has its leading above the letters
+          if (underIsland(g) && (strict || across(g, top) || across(g, bottom) || q.left < island.left || q.right > island.right)) return 'text under the island: ' + n.textContent.trim().slice(0, 30);
         }
       }
-      return !Array.from(box.querySelectorAll('img, svg, input, .btn, .ic')).some((el) => { const q = el.getBoundingClientRect(); return across(q, 0) || across(q, bar); });
+      for (const el of box.querySelectorAll(CONTROLS)) {
+        const q = el.getBoundingClientRect();
+        if (!q.width || !q.height || !shown(el) || el.closest('#bar')) continue;
+        if (el.matches('svg *, .btn svg, button svg, .btn img, button img')) continue;   // an icon inside a button goes with the button
+        if (q.height > 120) continue;   // a map or a picture that big is a panel, like a card
+        const svgOrImg = el.matches('img, svg, .ic');
+        if (!svgOrImg && !filled(el)) continue;
+        const t = { top: q.top + 0.3, bottom: q.bottom - 0.3 };   // less than a pixel is nothing
+        if (across(t, bar) || (across(t, 0) && el.matches('img, svg, input, .btn, .ic'))) return 'control cut: ' + el.outerHTML.slice(0, 80);
+        if (q.bottom > 0 && q.top < bar && underIsland(q)) return 'control under the island: ' + el.outerHTML.slice(0, 80);
+      }
+      for (const el of box.querySelectorAll('.card, canvas, img, svg')) {
+        const q = el.getBoundingClientRect();
+        if (!q.height || (!el.matches('.card') && q.height <= 120)) continue;
+        if (across(q, bar) && bar - q.top < 16) return 'a sliver of ' + el.className;   // a sliver of a card above the bar
+        for (const e of [q.top, q.bottom]) if (strict && e > top && e < bottom && q.left < island.right && q.right > island.left) return 'card edge under the island: ' + el.className;
+      }
+      return null;
     };
     const base = y === 'here' ? box.scrollTop : box.scrollTop + document.querySelector(s).getBoundingClientRect().top - y;
     for (const strict of [true, false]) {
-      for (let d = 0; d <= 200; d++) for (const t of down ? [base - d] : [base - d, base + d]) { box.scrollTop = t; if (Math.abs(box.scrollTop - t) < 1 && clean(strict)) return; }
+      for (let d = 0; d <= reach; d += 1 / 3) for (const t of down ? [base - d] : [base - d, base + d]) { box.scrollTop = t; if (Math.abs(box.scrollTop - t) < 1 && !fault(strict)) return; }
     }
     box.scrollTop = base;
-  }, [scroller, sel, y, down, ISLAND]);
+    const seen = {};
+    for (let d = -reach; d <= reach; d += 1 / 3) { box.scrollTop = base + d; const f = fault(false); if (f) seen[f] = (seen[f] || 0) + 1; }
+    box.scrollTop = base;
+    throw new Error(`scrollTo ${s}: no clean position within ${reach} points; ` + JSON.stringify(seen));
+  }, [scroller, sel, y, down, ISLAND, reach]);
 }
 const settle = (page, ms = 1200) => page.waitForTimeout(ms);
 
@@ -124,13 +157,18 @@ const STORIES = [
       await page.click(CUR + '.pick [data-act="plan-new"]');
       await page.waitForSelector('#spotName');
       await settle(page);
+      await scrollTo(page, '.screen', '.screen', 'here');   // as it opens, moved the least that ends it cleanly above the tab bar
+      await settle(page);
     } },
   { slug: 'share', head: 'Sunsets are better\nwith a friend.', sub: 'Share it in a tap, or put it in your calendar.',
     async shoot(page) {
       await page.click(CUR + '.pick [data-act="plan-new"]');
       await page.waitForSelector('[data-act="share-go"]');
       await settle(page, 600);
-      await scrollTo(page, '.screen', '.acts', 22);   // its card just below the island, the line above it gone over the top
+      // Its card whole and low on the screen, with the evening's last times above it and Getting home's heading below:
+      // with the card nearer the top, a line of text or a button always meets the island (the screen is too dense there),
+      // and with it any lower the screen is the Plan shot again.
+      await scrollTo(page, '.screen', '.acts', 560, false, 12);
       await settle(page);
     } },
   { slug: 'evenings-ahead', head: 'The evenings\nahead.', sub: 'The week’s sunsets rated, evening by evening.',
@@ -139,6 +177,8 @@ const STORIES = [
     async shoot(page) {
       await page.click(CUR + '[data-act="spots-all"]');
       await page.waitForSelector('.chips');
+      await settle(page);
+      await scrollTo(page, '.screen', '.screen', 'here');   // as it opens, moved the least that ends it cleanly above the tab bar
       await settle(page);
     } },
   { slug: 'tomorrow', head: 'Tomorrow’s light,\nhour by hour.', sub: 'Golden hour, blue hour, and where the sun sets.',
