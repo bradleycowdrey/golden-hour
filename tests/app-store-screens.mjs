@@ -113,17 +113,17 @@ async function scrollTo(page, scroller, sel, y, down) {
 const settle = (page, ms = 1200) => page.waitForTimeout(ms);
 
 /* ---------------- the stories, in order ---------------- */
-// One idea each. Every headline is one line, so the phone sits higher; a sub-line wraps at most once.
+// One idea each. Every headline is two lines (lines: 2), so the phone sits where every family app's does; the template then needs each sub-line to fit on one line.
 const STORIES = [
-  { slug: 'tonight', head: 'Is tonight worth it?', sub: 'Go, Maybe or Not tonight, why, and when to be there.',
+  { slug: 'tonight', head: 'Is tonight\nworth it?', sub: 'Go, Maybe or Not, why, and when to be there.',
     async shoot(page) { await settle(page); } },
-  { slug: 'plan', head: 'Plan the evening', sub: 'When to leave, when to be there, and when to start back before dark.',
+  { slug: 'plan', head: 'Plan the evening,\nstart to finish.', sub: 'When to leave, and when to head back by dark.',
     async shoot(page) {
       await page.click(CUR + '.pick [data-act="plan-new"]');
       await page.waitForSelector('#spotName');
       await settle(page);
     } },
-  { slug: 'share', head: 'Bring a friend', sub: 'Share the plan in a tap, or put it in your calendar with a reminder.',
+  { slug: 'share', head: 'Sunsets are better\nwith a friend.', sub: 'Share it in a tap, or put it in your calendar.',
     async shoot(page) {
       await page.click(CUR + '.pick [data-act="plan-new"]');
       await page.waitForSelector('[data-act="share-go"]');
@@ -131,15 +131,15 @@ const STORIES = [
       await scrollTo(page, '.screen', '.acts', 56);
       await settle(page);
     } },
-  { slug: 'evenings-ahead', head: 'The evenings ahead', sub: 'The week’s sunsets rated, so you know which evenings to keep free.',
+  { slug: 'evenings-ahead', head: 'The evenings\nahead.', sub: 'The week’s sunsets rated, evening by evening.',
     async shoot(page) { await scrollTo(page, CUR.trim(), CUR + '.moreplaces', 4); await settle(page); } },
-  { slug: 'places', head: 'Where to watch', sub: 'Viewpoints, parks and rooftops nearby. Filter for parking, toilets or a short walk.',
+  { slug: 'places', head: 'Find the best\nplace to watch.', sub: 'Viewpoints, parks and rooftops, with filters.',
     async shoot(page) {
       await page.click(CUR + '[data-act="spots-all"]');
       await page.waitForSelector('.chips');
       await settle(page);
     } },
-  { slug: 'tomorrow', head: 'Tomorrow’s light', sub: 'Golden hour, blue hour, and where the sun goes down.',
+  { slug: 'tomorrow', head: 'Tomorrow’s light,\nhour by hour.', sub: 'Golden hour, blue hour, and where the sun sets.',
     async shoot(page) {
       await page.locator(CUR + 'button.day').nth(1).click();
       await page.waitForSelector('#sheet .light');
@@ -171,7 +171,7 @@ for (const [k, story] of STORIES.entries()) {
     if (RAW) fs.writeFileSync(rawFile, raw);
   }
   const file = `iphone-${k + 1}-${story.slug}.png`;
-  fs.writeFileSync(path.join(OUT, file), await compose(browser, 'iphone', { head: story.head, sub: story.sub, png: raw, title: 'Golden Hour', file, lines: 1 }, THEMES.goldenhour, FONTS));
+  fs.writeFileSync(path.join(OUT, file), await compose(browser, 'iphone', { head: story.head, sub: story.sub, png: raw, title: 'Golden Hour', file, lines: 2 }, THEMES.goldenhour, FONTS));
   console.log('wrote docs/app-store/' + file);
 }
 await browser.close();
