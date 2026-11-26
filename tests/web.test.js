@@ -194,6 +194,8 @@ const server = http.createServer((req, res) => {
   const answerOf = (r, when) => (r.verdict === 'go' ? `Go ${when}` : r.verdict === 'maybe' ? `Maybe ${when}` : `Not ${when}`);
   const shares = (page) => page.evaluate(() => window.__shares);
   const waitPlaces = (page) => page.waitForFunction(() => { const g = window.__gh, d = g.DATA[g.S.current]; return d && d.spots && typeof d.spots === 'object' && d.near && typeof d.near === 'object'; }, null, { timeout: 15000 });
+  /** The times at the place on top of the page (Inspiration Point), `day` days after 23 June: what every screen shows. */
+  const pickTimesOn = (day) => G.eveningTimes(G.solarNoonGuess(2026, 6, 23 + day, OSM[0].lon), OSM[0].lat, OSM[0].lon);
   const reset = () => Object.assign(net, { forecast: 'ok', geocode: 'ok', tiles: 'ok', overpass: 'ok', near: 'ok', photon: 'ok' });
 
   // ---------- 1. First run: the sample, and the answer in ten seconds ----------
@@ -272,6 +274,10 @@ const server = http.createServer((req, res) => {
     check((await text(page, CUR + '.hero .ans')).trim() === 'Go tonight' && (await text(page, CUR + '.hero .reason')).trim() === r.reason, 'the answer and its reason are the core’s for the same forecast');
     const pickT = G.eveningTimes(G.solarNoonGuess(2026, 6, 23, OSM[0].lon), OSM[0].lat, OSM[0].lon);   // the place on top: its own times, as its plan shows
     check(norm(await text(page, CUR + '.hero .atimes')) === `Sunset ${fmt(pickT.sunset)} · be there by ${fmt(pickT.bestStart - 20 * MIN)}`, 'one time: sunset, and be there by 20 minutes before the best light');
+    const pf = norm(await text(page, CUR + '.pick .pfacts')).replace(/\s+/g, ' ');
+    check(/Leave by \d+:\d\d pm/.test(pf) && /Golden hour/.test(pf) && pf.includes(`Start back by ${fmt(pickT.lastLight - 5 * MIN)}`), 'the place on top says when to leave, the golden hour and when to start back');
+    check(/Parking and toilets nearby/.test(await text(page, CUR + '.pick .srow')) && await page.locator(CUR + '.pick a.btn').innerText() === 'Directions', 'with parking and toilets on its row, and Directions beside the plan button');
+    check(norm(await text(page, CUR + 'button.day >> nth=0')).includes(fmt(pickT.sunset)), 'today’s row in the week shows the same sunset as the top');
     check(/Outlook|Forecast|typical|°/.test(await text(page, CUR + '.hero')) === false, 'no “Outlook”, “Forecast”, “(typical)” or compass degrees on the answer');
     check((await text(page, CUR + '.pick .srow .n')).trim() === 'Inspiration Point' && (await text(page, CUR + '.pick [data-act="plan-new"]')).trim() === 'Plan this evening', 'one place: the top easy-to-reach one, with Plan this evening');
     check(await page.locator(CUR + '.dt').count() === 0 && await page.locator(CUR + '[data-act="details-toggle"]').getAttribute('aria-expanded') === 'false', 'the score and the tiles are one tap down, under Why');
@@ -282,7 +288,7 @@ const server = http.createServer((req, res) => {
     await page.click(CUR + '[data-act="details-toggle"]');
     check((await text(page, CUR + '.scorecard .big')).trim() === r.score.toFixed(1) && (await text(page, CUR + '.scorecard')).includes(`${r.colourClass} colour`) && !/of 100/.test(await text(page, CUR + '.scorecard')), `Why shows the score (${r.score.toFixed(1)}) and the colour class`);
     const strip = norm(await text(page, CUR + '.times'));
-    check(['goldenStart', 'bestStart', 'sunset', 'afterglowEnd', 'lastLight'].every((k) => strip.includes(fmt(exp.times[k]))), 'and the five times, to the minute');
+    check(['goldenStart', 'bestStart', 'sunset', 'afterglowEnd', 'lastLight'].every((k) => strip.includes(fmt(pickT[k]))), 'and the five times, to the minute');
     check(await page.locator(CUR + '.dt').count() === 15 && await page.evaluate(() => localStorage.getItem('gh.details')) === 'true', 'and every tile; the choice is remembered');
     check(/flat horizon/.test(await text(page, CUR + '.card:has(.evpath)')), 'a note says times assume a flat horizon');
     await shot(page, 'phone-why');
@@ -296,9 +302,10 @@ const server = http.createServer((req, res) => {
     await page.waitForSelector('#sheet .sh-head');
     const e1 = expectedDenver(1, 3);
     check((await text(page, '#sheet .ans')).trim() === answerOf(e1.rating, 'tomorrow') && await page.locator('#sheet .dt').count() === 15 && await page.locator('#sheet .light').count() === 1, 'tapping an evening opens its sheet: the answer, the light, the score and every tile');
+    const l1 = pickTimesOn(1);
     const light = norm(await text(page, '#sheet .light'));
-    check(light.includes(`Golden hour ${fmt(e1.times.goldenStart)} to ${fmt(e1.times.afterglowEnd)}`) && light.includes(`Blue hour ${fmt(e1.times.afterglowEnd)} to ${fmt(e1.times.lastLight)}`) && /sets to the north-west/.test(light), 'golden hour, blue hour and where the sun sets');
-    check(light.includes(`Decide by ${fmt(e1.times.bestStart - 20 * MIN - 3 * HOUR)}`) && /Wind \d+ mph/.test(light), 'a decide-by time three hours before, with the wind');
+    check(light.includes(`Golden hour ${fmt(l1.goldenStart)} to ${fmt(l1.afterglowEnd)}`) && light.includes(`Blue hour ${fmt(l1.afterglowEnd)} to ${fmt(l1.lastLight)}`) && /sets to the north-west/.test(light), 'golden hour, blue hour and where the sun sets');
+    check(light.includes(`Decide by ${fmt(l1.bestStart - 20 * MIN - 3 * HOUR)}`) && /Wind \d+ mph/.test(light), 'a decide-by time three hours before, with the wind');
     await layout(page, 'day sheet (phone)');
     await shot(page, 'phone-day-sheet');
     await page.click('#sheet [data-act="sheet-step"][data-d="1"]');
@@ -517,7 +524,7 @@ const server = http.createServer((req, res) => {
     await page.click('#bar [data-act="open-list"]');
     await page.fill('#q', 'Denv'); await page.waitForSelector('.result'); await page.click('.result');
     await page.waitForFunction(() => /Couldn’t reach the forecast/.test((document.querySelector('.page[aria-current="true"] .hero') || {}).textContent || ''), null, { timeout: 20000 });
-    const t0 = expectedDenver(0, 3).times;
+    const t0 = pickTimesOn(0);
     check(norm(await text(page, CUR + '.hero .atimes')).includes(`Sunset ${fmt(t0.sunset)}`) && await page.locator(CUR + '.hero [data-act="retry"]').isVisible(), 'forecast down: says so, still gives the sunset time, and offers Try again');
     await page.waitForSelector(CUR + '.moreplaces .srow', { timeout: 15000 });
     check((await page.locator(CUR + '.moreplaces .srow .n').allInnerTexts()).map((t) => t.trim()).includes('Inspiration Point'), 'forecast down: the places still load');

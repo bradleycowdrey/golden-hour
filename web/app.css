@@ -700,3 +700,21 @@ svg.horizon text { font: 500 14px var(--font); fill: rgba(255,255,255,.8); color
 .planacts .row { flex-wrap: wrap; gap: 8px; }
 .planacts .btn { flex: 1 1 0; min-width: 0; padding-left: 10px; padding-right: 10px; white-space: nowrap; font-size: 15px; }
 .planfoot { margin-top: 12px; }
+
+/* ---------- Round 2: the place card's times, a simpler week, dates as words ---------- */
+.pfacts { display: flex; gap: 8px; margin: 10px 0 2px; }
+.pfacts span { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: 12px; background: var(--fill); }
+.pfacts small { font-size: 13px; color: var(--t70); white-space: nowrap; }
+.pfacts b { font-size: 15px; font-weight: 600; white-space: nowrap; }
+.cta.two-up { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+.cta.two-up .btn { flex: 1 1 0; min-width: 0; white-space: nowrap; text-align: center; justify-content: center; }
+.srow .r.near { color: var(--t70); }
+.day { grid-template-columns: 62px 48px 36px minmax(0, 1fr) auto; }
+.day .why1 { font-size: 14px; color: var(--t85); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.day .hi span { font-size: 14px; color: var(--t85); }
+.anydate, .dateline { position: relative; }
+.anydate { justify-content: center; }
+.anydate .btn { pointer-events: none; }
+.anydate input, .dateline input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; }
+.dateline { display: inline-flex; align-items: center; min-height: 44px; padding: 0 14px; border-radius: 12px; background: rgba(0,0,0,.28); }
+.dateline .datetext { font-size: 15px; font-weight: 500; color: #fff; }

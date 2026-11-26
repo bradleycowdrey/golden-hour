@@ -217,7 +217,11 @@
   /** Ten evenings from today, in the place's own calendar; the first six rated when the forecast covers them. */
   function evenings(p, opts) {
     const today = localDate(now(), p.tz), out = [];
-    for (let i = 0; i < 10; i++) out.push(eveningOn(p, addDays(today, i), opts));
+    // Times are those at the place on top of the page (when there is one), so the page, the week, a day's sheet,
+    // the place and its plan all agree to the minute. The rating stays the location's forecast.
+    const best = opts && opts.at ? null : bestPlace(p);
+    const o = best && best.lat != null ? Object.assign({}, opts, { at: { lat: best.lat, lon: best.lon } }) : opts;
+    for (let i = 0; i < 10; i++) out.push(eveningOn(p, addDays(today, i), o));
     return out;
   }
   /** When an evening is over: last light, or local midnight when twilight lasts all night. */
@@ -890,10 +894,7 @@
   }
   /** The times the top of the page shows: the chosen place's own, so the page, the place and the plan agree to the minute. */
   function shownTimes(p, ev) {
-    const best = ev.rating && ev.rating.verdict !== 'skip' && ev.times.state !== 'none' ? bestPlace(p) : null;
-    if (!best || best.lat == null) return ev.times;
-    const t = timesAt(best, ev.date);
-    return t.state === 'none' || t.sunset == null ? ev.times : t;
+    return ev.times;   // evenings() already uses the chosen place's times
   }
 
   /** The answer: go or not, the score, why, and one time. */
@@ -941,10 +942,19 @@
           <span class="sl"><span class="n">${esc(answerText(next))}</span><span class="r">Sunset ${esc(timeText(next.times.sunset, p.tz))}. ${esc(next.rating.reason)}</span></span><span class="chev">${SP.chev}</span></button>
         <div class="cta"><button type="button" class="btn primary" data-act="plan-new" data-date="${next.date}">Plan ${esc(dayName(next.date, true))}</button></div></section>`;
     }
-    const best = bestPlace(p);
+    const best = bestPlace(p), f = (ms) => esc(timeText(ms, p.tz));
+    let facts = '';
+    if (best && ev.times.state !== 'none') {
+      const walkIn = best.cat === 'own' ? (best.walkIn != null ? best.walkIn : 5) : WALK_OF_SPOT(best);
+      const pt = G.planTimes(ev.times, { walkIn, travel: best.travel || 0, buffer: G.bufferMinutes(r.score, weekdayOf(ev.date)) });
+      const w = G.lightWindows(ev.times), short = (ms) => f(ms).replace(/\s?[ap]m$/i, '');
+      facts = `<div class="pfacts"><span><small>Leave by</small><b class="num">${f(pt.leaveBy)}</b></span>
+        ${w ? `<span><small>Golden hour</small><b class="num">${short(w.golden[0])}–${short(w.golden[1])}</b></span>` : ''}
+        ${ev.times.state === 'ok' ? `<span><small>Start back by</small><b class="num">${f(G.startBackBy(pt, walkIn))}</b></span>` : ''}</div>`;
+    }
     return `<section class="card pick"><p class="eyebrow">${best && best.cat === 'own' ? 'Your spot' : 'Where to watch'}</p>
-      ${best ? spotRow(best, p) : placesState(p)}
-      <div class="cta"><button type="button" class="btn primary" data-act="plan-new" data-date="${ev.date}"${best ? ` data-id="${esc(best.id)}"` : ''}>Plan ${esc(planWord(ev))}</button></div></section>`;
+      ${best ? spotRow(best, p, null, null, null, nearText(p, best)) : placesState(p)}${facts}
+      <div class="cta two-up"><button type="button" class="btn primary" data-act="plan-new" data-date="${ev.date}"${best ? ` data-id="${esc(best.id)}"` : ''}>Plan ${esc(planWord(ev))}</button>${best && best.lat != null ? `<a class="btn" target="_blank" rel="noopener" href="${esc(directionsUrl(best))}">Directions</a>` : ''}</div></section>`;
   }
   /** A few more places under the one on top, and the way in to all of them. None is pushed on a Not tonight. */
   function morePlaces(p, ev) {
@@ -955,14 +965,15 @@
     if (s) { picks.push(...s.easy.slice(0, 2), ...s.dining.slice(0, 1)); if (r && r.verdict === 'go') picks.push(...s.adventurous.slice(0, 1)); }
     // With an answer, the first place is already on top; without one (no forecast yet) the places still show here.
     const rows = picks.filter((x) => !r || !best || x.id !== best.id).slice(0, 3);
-    return `<section class="card moreplaces"><p class="eyebrow">${r ? 'More places' : 'Where to watch'}</p>${rows.length ? rows.map((x) => spotRow(x, p)).join('') : r && best ? '' : placesState(p)}${all}</section>`;
+    return `<section class="card moreplaces"><p class="eyebrow">${r ? 'More places' : 'Where to watch'}</p>${rows.length ? rows.map((x) => spotRow(x, p, null, null, null, nearText(p, x))).join('') : r && best ? '' : placesState(p)}${all}</section>`;
   }
   function weekCard(p, evs) {
     const later = evs.find((e) => !e.rating && e.day > 5), today = localDate(now(), p.tz);
-    return `<section class="card daily"><p class="eyebrow">${TI.cal}<span>The evenings ahead</span><span class="sp"></span><button type="button" class="link" data-act="share-week" data-place="${esc(p.id)}">Share</button></p>
-      <div class="days">${evs.filter((e) => e.rating || e.times.state === 'none' || e.day <= 5).map((e) => dayRow(e, p)).join('')}
-        ${later ? `<div class="day later"><span class="why">${esc(dayName(later.date, true))}, ${esc(dateText(later.date))} and beyond: too early for colour</span></div>` : ''}</div>
-      <label class="anydate"><span>Another date</span><input type="date" id="anyDate" data-place="${esc(p.id)}" min="${today}" max="${addDays(today, 366)}" aria-label="See the sunset times on another date"></label>
+    const rated = evs.some((e) => e.rating), unrated = evs.find((e) => !e.rating && e.times.state !== 'none');
+    return `<section class="card daily"><p class="eyebrow">${TI.cal}<span>The evenings ahead</span><span class="sp"></span><button type="button" class="link" data-act="share-week" data-place="${esc(p.id)}">Share the week</button></p>
+      <div class="days">${evs.filter((e) => (rated ? e.rating || e.times.state === 'none' : e.day <= 5)).map((e) => dayRow(e, p)).join('')}
+        ${rated && unrated ? `<div class="day later"><span class="why">${esc(dayName(unrated.date, true))} onwards: too early for colour</span></div>` : !rated && later ? `<div class="day later"><span class="why">${esc(dayName(later.date, true))}, ${esc(dateText(later.date))} and beyond: too early for colour</span></div>` : ''}</div>
+      <label class="anydate"><span class="btn">Pick another date</span><input type="date" id="anyDate" data-place="${esc(p.id)}" min="${today}" max="${addDays(today, 366)}" aria-label="See the sunset times on another date"></label>
       <p class="small muted" data-gap>Tap an evening for more. Three to five days out could change. Sunset times are exact for any date.</p></section>`;
   }
 
@@ -1005,7 +1016,7 @@
   function daySheet() {
     const sh = S.sheet, p = place(sh.placeId);
     if (!p) return '';
-    const today = localDate(now(), p.tz), ev = eveningOn(p, sh.date), r = ev.rating, t = ev.times, d = DATA[p.id] || {};
+    const today = localDate(now(), p.tz), bp = bestPlace(p), ev = eveningOn(p, sh.date, bp && bp.lat != null ? { at: { lat: bp.lat, lon: bp.lon } } : undefined), r = ev.rating, t = ev.times, d = DATA[p.id] || {};
     const arrow = (n, on) => `<button type="button" class="circle sm" data-act="sheet-step" data-d="${n}" aria-label="${n < 0 ? 'The evening before' : 'The next evening'}"${on ? '' : ' disabled'}>${n < 0 ? '‹' : '›'}</button>`;
     const head = `<div class="sh-head"><button type="button" class="done" data-act="sheet-close">Done</button><h2 id="sheetTitle">${esc(dayName(sh.date, true))}, ${esc(dateText(sh.date))}</h2><span class="nav">${arrow(-1, sh.date > today)}${arrow(1, sh.date < addDays(today, 366))}</span></div>`;
     if (t.state === 'none') return `${head}<section class="hero sheethero"><p class="when">${esc(p.name)}</p><p class="none">No sunset here on this date</p></section>`;
@@ -1126,7 +1137,7 @@
     const label = ev.day === 0 ? 'Today' : ev.day === 1 ? 'Tomorrow' : dayName(ev.date, true), short = ev.day === 0 ? 'Today' : dayName(ev.date);
     const mark = !ev.rating || ev.rating.verdict !== 'go' ? '' : ev.rating.score >= 4.5 ? 'Great' : 'Good';
     const d = `<span class="d">${esc(short)}${mark ? `<small class="best">${mark}</small>` : ''}</span>`;
-    const st = ev.day === 0 ? shownTimes(p, ev) : ev.times;   // today's row matches the top of the page
+    const st = ev.times;
     const sunset = st.sunset == null ? '' : esc(timeText(st.sunset, p.tz));
     if (ev.times.state === 'none') return `<div class="day none">${d}<span class="why">No sunset here on this date</span><span class="hi"></span></div>`;
     if (!ev.rating) return `<div class="day none">${d}<span class="why">${ev.day > 5 ? 'Too early to call' : 'No forecast yet'}</span><span class="hi"><span>Sunset ${sunset}</span></span></div>`;
@@ -1134,8 +1145,8 @@
     return `<button type="button" class="day${out ? ' outlook' : ''}" data-act="day" data-date="${ev.date}" data-place="${esc(p.id)}" aria-label="${esc(label)}. ${esc(answerShort(r))}. ${esc(r.reason)}">${d}
       <span class="ic v ${r.verdict}" aria-hidden="true">${icon(r)}<small>${answerShort(r)}</small></span>
       <span class="sc num" aria-hidden="true">${scoreText(r)}</span>
-      <span class="cbar" aria-hidden="true"><i class="f-${cls}" data-w="${Math.max(3, r.colour)}"></i></span>
-      <span class="hi" aria-hidden="true"><b class="c-${cls}">${r.colourClass}</b><span>${sunset}</span></span></button>`;
+      <span class="why1" aria-hidden="true">${esc(r.colourClass)} colour</span>
+      <span class="hi" aria-hidden="true"><span>${sunset}</span></span></button>`;
   }
 
   // ---------- Plans ----------
@@ -1235,7 +1246,7 @@
     const better = changed && mo.r && mo.r.verdict !== 'go' && p ? nextGood(evenings(p), mo.ev) : null;
     const head = `<div class="row top"><button type="button" class="btn quiet back" data-act="close-view">‹ Back</button></div>
       <section class="hero planhero"><h2>${esc(dr.spot.name || 'A new plan')}</h2>
-      <p class="when"><label class="dateline"><span class="sr">Date</span><input type="date" id="planDate" value="${dr.date}" min="${past ? dr.date : today}" max="${addDays(today, 366)}"${past ? ' disabled' : ''}></label></p></section>`;
+      <p class="when"><label class="dateline"><span class="sr">Date</span><span class="datetext" aria-hidden="true">${esc(dayName(dr.date, true))}, ${esc(dateText(dr.date))}${past ? '' : ' · change'}</span><input type="date" id="planDate" value="${dr.date}" min="${past ? dr.date : today}" max="${addDays(today, 366)}"${past ? ' disabled' : ''}></label></p></section>`;
     const coords = mo.hasPin ? `${dr.spot.lat.toFixed(5)}, ${dr.spot.lon.toFixed(5)}` : '';
     const placeCard = `<section class="card"><p class="eyebrow">The place</p>
       ${past ? '' : `<div class="box vbox"><input id="venueQ" type="search" placeholder="Find a venue by name or address" autocomplete="off" aria-label="Find a venue by name or address" value="${esc(S.view.venueQ || '')}"></div>
@@ -1513,7 +1524,7 @@
     return 'Parking and toilets not listed.';
   }
 
-  const away = (s) => `${s.km < 0.2 ? 'Here' : `${esc(G.distanceText(s.km, settings.imperialFirst, true))} · about ${s.travel} min`}`;
+  const away = (s) => `${s.km < 0.2 ? 'Here' : `${esc(G.distanceText(s.km, settings.imperialFirst, true))} · about ${s.km < 1.5 ? `${Math.max(2, Math.round(s.km * 12))} min walk` : `${s.travel} min`}`}`;
   /** The place on Google Maps, to see photos and what kind of place it is. Opens Google; nothing is sent until tapped. */
   function mapsUrl(s, p) {
     const named = s.cat !== 'own' && s.name;
