@@ -901,7 +901,18 @@
   function answerBlock(ev, p, evs) {
     const r = ev.rating, t = shownTimes(p, ev), next = r.verdict === 'skip' ? nextGood(evs, ev) : null;
     const tail = r.verdict === 'skip' ? (next ? ` Try ${esc(dayName(next.date, true))}.` : '') : r.tier === 'outlook' ? ' Could change.' : '';
-    return `<div class="ansrow" aria-hidden="true"><p class="ans">${icon(r)}<span>${esc(answerText(ev))}</span></p><p class="hscore c-${r.colourClass.toLowerCase()}"><b class="num">${scoreText(r)}</b> of 5</p></div>
+    // The rating is the picture: the sun's arc over the horizon, filled as far as the score, with the number inside.
+    const frac = Math.max(0.04, Math.min(1, r.score / 5)), L = Math.PI * 104, a = Math.PI * frac;
+    const sx = (130 - 104 * Math.cos(a)).toFixed(1), sy = (124 - 104 * Math.sin(a)).toFixed(1);
+    const dial = `<div class="dial v-${r.verdict}" aria-hidden="true"><svg viewBox="0 0 260 140" focusable="false">
+        <defs><linearGradient id="dialg" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#EE6F4F"/><stop offset=".55" stop-color="#F9B15E"/><stop offset="1" stop-color="#FFE29A"/></linearGradient>
+          <radialGradient id="dialsun"><stop offset="0" stop-color="#FFF6D8"/><stop offset=".45" stop-color="#FFD27A"/><stop offset="1" stop-color="#FFD27A" stop-opacity="0"/></radialGradient></defs>
+        <path class="trk" d="M26 124A104 104 0 0 1 234 124" fill="none" stroke-width="10" stroke-linecap="round"/>
+        <path class="arc" d="M26 124A104 104 0 0 1 234 124" fill="none" stroke="url(#dialg)" stroke-width="10" stroke-linecap="round" stroke-dasharray="${(L * frac).toFixed(1)} ${(L + 20).toFixed(1)}"/>
+        <circle class="glow" cx="${sx}" cy="${sy}" r="20" fill="url(#dialsun)"/><circle class="sun" cx="${sx}" cy="${sy}" r="7.500"/>
+        <line class="hz" x1="6" y1="134" x2="254" y2="134" stroke-width="1.500" stroke-linecap="round"/></svg>
+      <p class="hscore c-${r.colourClass.toLowerCase()}"><b class="num">${scoreText(r)}</b><span> of 5</span></p></div>`;
+    return `${dial}<p class="ans" aria-hidden="true"><span>${esc(answerText(ev))}</span></p>
       <p class="reason" aria-hidden="true">${esc(r.reason)}${tail}</p>
       <p class="atimes" aria-hidden="true"><b>Sunset ${esc(timeText(t.sunset, p.tz))}</b>${r.verdict === 'skip' ? '' : ` · be there by ${esc(timeText(t.bestStart - 20 * MIN, p.tz))}`}</p>`;
   }
@@ -984,8 +995,9 @@
     const head = `${r ? `<button type="button" class="circle heroshare" data-act="share-today" aria-label="Share ${esc(whenWord(ev))}’s sunset">${SP.share}</button>` : ''}<button type="button" class="circle herogear" data-act="settings" aria-label="Settings">${BAR.gear}</button><h2>${esc(p.name)}${p.sample ? ' <span class="tag">Sample</span>' : ''}</h2>
       <p class="when">${esc(dayName(ev.date, true))}, ${esc(dateText(ev.date))}${p.region ? ` · ${esc(p.region)}` : ''}</p>`;
     let hero;
+    const upd = updatedLine(p);
     if (ev.times.state === 'none') hero = `<section class="hero">${head}<p class="none">No sunset here on this date</p><p class="reason">${ev.times.polar === 'day' ? 'The sun stays up all night.' : 'The sun stays below the horizon.'}</p></section>`;
-    else if (r) hero = `<section class="hero answer v-${r.verdict}" aria-label="${esc(spokenAnswer(ev, p, evs))}">${head}${answerBlock(ev, p, evs)}${updatedLine(p)}</section>`;
+    else if (r) hero = `<section class="hero answer v-${r.verdict}" aria-label="${esc(spokenAnswer(ev, p, evs))}">${head}${answerBlock(ev, p, evs)}${/stale/.test(upd) ? upd : ''}</section>`;
     else if (d.error) hero = `<section class="hero">${head}<p class="none">${d.error === 'ceiling' ? 'Refreshing again tomorrow' : 'Couldn’t reach the forecast'}</p>
       <p class="atimes"><b>Sunset ${esc(timeText(ev.times.sunset, p.tz))}</b> · be there by ${esc(timeText(ev.times.bestStart - 20 * MIN, p.tz))}</p>
       <div class="cta"><button type="button" class="btn white" data-act="retry">Try again</button></div></section>`;
@@ -997,7 +1009,7 @@
     const lone = !p.sample && S.places.length === 1 ? '<span>Add another place to swipe between them. </span>' : '';
     return `<div class="two"><div class="col">${hero}${warns}${pickCard(p, ev, evs)}${sample}${howWasIt(p, evs)}</div>
       <div class="col">${weekCard(p, evs)}${ev.times.state === 'none' ? '' : morePlaces(p, ev)}${whyFold(ev, p)}</div></div>
-      <p class="small pagefoot">${lone}</p>`;
+      <div class="pagefoot">${r && !/stale/.test(upd) ? upd : ''}${lone ? `<p class="small">${lone}</p>` : ''}</div>`;
   }
 
   // ---------- Sheets: a day, a place, the place picker and Settings, over whatever is showing ----------
@@ -1204,7 +1216,7 @@
     const start = pt.headBackBy - (o.walkIn || 0) * MIN;
     return `<div class="timeline">
       ${o.leave ? row('', pt.leaveBy, 'Leave by', o.leave) : ''}
-      ${row('', pt.meetAt, 'Be there by', o.own ? 'The time you set' : `Settled 20 minutes before the best colour, from about ${esc(timeText(pt.meetAt + 20 * MIN, tz))}`)}
+      ${row('', pt.meetAt, 'Be there by', o.own ? 'The time you set' : `About ${Math.round((pt.sunset - pt.meetAt) / MIN)} minutes before sunset, settled before the colour builds`)}
       ${row('sun', pt.sunset, 'Sunset', 'Stay: the best colour often comes after the sun is down')}
       ${row('', pt.stayUntil, 'Afterglow ends', o.twilight ? 'Twilight lasts all night here' : 'The last of the colour')}
       ${row('', start, 'Start back by', o.twilight ? 'It stays light' : `${o.walkIn ? `A ${o.walkIn}-minute walk: at your car` : 'Leave'} before dark at ${esc(timeText(pt.headBackBy, tz))}`)}

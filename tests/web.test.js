@@ -204,7 +204,7 @@ const server = http.createServer((req, res) => {
     check((await text(page, CUR + '.hero h2')).includes('Sample'), 'first run: a sample town, labelled Sample');
     check(/^(Go|Maybe|Not) tonight$/.test((await text(page, CUR + '.hero .ans')).trim()), 'first run: the top of the page is the answer in words');
     check(/Sunset \d+:\d\d/.test(norm(await text(page, CUR + '.hero .atimes'))), 'first run: one time under it');
-    check(/^\d\.\d of 5$/.test(norm(await text(page, CUR + '.hero .hscore')).trim()) && await page.locator(CUR + '.hero .stars').count() === 0, 'the score sits beside the answer, on one line, with no stars');
+    check(/^\d\.\d\s+of 5$/.test(norm(await text(page, CUR + '.hero .hscore')).trim()) && await page.locator(CUR + '.hero .dial .arc').count() === 1 && await page.locator(CUR + '.hero .stars').count() === 0, 'the score sits beside the answer, on one line, with no stars');
     check(net.calls.length === 0, 'first run: nothing is fetched until a place is chosen');
     const tabs = (await page.locator('#bar .barbtn span').allInnerTexts()).map((t) => t.trim());
     check(tabs.join('|') === 'Today|Plans|Places' && await page.locator('#bar .barbtn[aria-current="page"]').innerText() === 'Today', 'the bar: Today, Plans, Places, with the one you are on marked');
@@ -246,7 +246,7 @@ const server = http.createServer((req, res) => {
     check(norm(await text(page, CUR + '.hero .atimes')) === `Sunset ${fmt(exp.times.sunset)}`, 'a Not tonight shows the sunset time and no “be there by”');
     check(await page.locator(CUR + '.pick [data-act="plan-new"]').innerText() === `Plan ${nextName}` && !/this evening/.test(await text(page, CUR + '.pick')), `the button plans ${nextName}, not this evening`);
     check(await page.locator(CUR + '.pick .srow[data-act="spot-open"]').count() === 0 && await page.locator(CUR + '.moreplaces .srow').count() === 0, 'no place is pushed on a Not tonight');
-    check(/^Updated \d+:\d\d (am|pm) · Refresh$/.test(norm(await text(page, CUR + '.hero .upd')).trim()), 'when the forecast was updated, with Refresh');
+    check(/^Updated \d+:\d\d (am|pm) · Refresh$/.test(norm(await text(page, CUR + '.upd')).trim()), 'when the forecast was updated, with Refresh');
     check(await page.locator('.page[aria-current="true"] .small').filter({ hasText: 'Add another place to swipe between them' }).count() === 1, 'with one location, a line says how to get more to swipe between');
     await layout(page, 'not tonight (phone)'); await contrast(page, 'not tonight');
     await shot(page, 'phone-not-tonight');
@@ -526,20 +526,20 @@ const server = http.createServer((req, res) => {
     await page.fill('#q', 'Denv'); await page.waitForSelector('.result'); await page.click('.result');
     await page.waitForFunction(() => /Couldn’t reach the forecast/.test((document.querySelector('.page[aria-current="true"] .hero') || {}).textContent || ''), null, { timeout: 20000 });
     const t0 = pickTimesOn(0);
-    check(norm(await text(page, CUR + '.hero .atimes')).includes(`Sunset ${fmt(t0.sunset)}`) && await page.locator(CUR + '.hero [data-act="retry"]').isVisible(), 'forecast down: says so, still gives the sunset time, and offers Try again');
+    check(norm(await text(page, CUR + '.hero .atimes')).includes(`Sunset ${fmt(t0.sunset)}`) && await page.locator(CUR + '[data-act="retry"] >> nth=0').isVisible(), 'forecast down: says so, still gives the sunset time, and offers Try again');
     await page.waitForSelector(CUR + '.moreplaces .srow', { timeout: 15000 });
     check((await page.locator(CUR + '.moreplaces .srow .n').allInnerTexts()).map((t) => t.trim()).includes('Inspiration Point'), 'forecast down: the places still load');
     await shot(page, 'phone-forecast-down');
     net.forecast = 'ok';
-    await page.click(CUR + '.hero [data-act="retry"]');
+    await page.click(CUR + '[data-act="retry"] >> nth=0');
     await page.waitForSelector(CUR + '.hero .ans', { timeout: 15000 });
     check((await text(page, CUR + '.hero .ans')).trim() === 'Go tonight', 'Try again brings the answer');
     // Then it goes down again, seven hours later: the last forecast stays, marked.
     net.forecast = 'down';
     await page.clock.setFixedTime(new Date(GO + 7 * HOUR + 5 * MIN));
-    await page.click(CUR + '.hero [data-act="retry"]');
-    await page.waitForFunction(() => /Couldn’t refresh/.test((document.querySelector('.page[aria-current="true"] .hero .upd') || {}).textContent || ''), null, { timeout: 20000 });
-    check(/^Couldn’t refresh\. Updated 7 h ago · Try again$/.test(norm(await text(page, CUR + '.hero .upd')).trim()) && await page.locator(CUR + '.hero .ans').isVisible(), 'a failed refresh keeps the last forecast, marked “Couldn’t refresh. Updated 7 h ago · Try again”');
+    await page.click(CUR + '[data-act="retry"] >> nth=0');
+    await page.waitForFunction(() => /Couldn’t refresh/.test((document.querySelector('.page[aria-current="true"] .upd') || {}).textContent || ''), null, { timeout: 20000 });
+    check(/^Couldn’t refresh\. Updated 7 h ago · Try again$/.test(norm(await text(page, CUR + '.upd')).trim()) && await page.locator(CUR + '.hero .ans').isVisible(), 'a failed refresh keeps the last forecast, marked “Couldn’t refresh. Updated 7 h ago · Try again”');
     await shot(page, 'phone-stale');
     // Status says what failed.
     await page.click(CUR + '[data-act="settings"]');
